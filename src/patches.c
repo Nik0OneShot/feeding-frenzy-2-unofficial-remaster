@@ -811,6 +811,12 @@ void __thiscall layout_pan_apply_hook(BYTE *pan, float *camera)
         // (the line w is drawn at P + w for the play layer at P = -camera): it then reaches
         // w (s - 1) less far up, a strip the HUD covers.
         if (p->water > 0) pos[1] = -camera[1] + p->water * (1 - s);
+        // A mixed layer without a surface (the reef's rocks) sits on the level's floor
+        // instead: scaled up to cover the width, its art grows taller than the level, and
+        // centered, its bottom (with the clams on its rocks) went below the level's bottom
+        // edge, off screen. Its bottom is lined up with the level's (the line h, drawn at
+        // P + h for the play layer at P); the extra height goes up, behind the HUD.
+        else if (p->mixed) pos[1] = -camera[1] + p->h * (1 - s);
     }
     *(float *)(widget + WIDGET_SCALE_X) = s;
     *(float *)(widget + WIDGET_SCALE_Y) = s;
