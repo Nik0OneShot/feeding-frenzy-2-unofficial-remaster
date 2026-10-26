@@ -1,0 +1,4 @@
+# build.sh runs under sh on Windows too: keep its line endings as they are
+*.sh text eol=lf
+*.yml text eol=lf
+*.dll binary
