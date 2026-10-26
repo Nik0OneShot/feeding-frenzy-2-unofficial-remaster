@@ -1,0 +1,5 @@
+LIBRARY version.dll
+EXPORTS
+    GetFileVersionInfoSizeA = proxy_GetFileVersionInfoSizeA@8
+    GetFileVersionInfoA = proxy_GetFileVersionInfoA@16
+    VerQueryValueA = proxy_VerQueryValueA@16

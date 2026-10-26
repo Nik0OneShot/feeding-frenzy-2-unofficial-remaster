@@ -1,0 +1,36 @@
+#include <winver.h>
+#include "resource.h"
+
+1 24 "setup.manifest"
+
+RES_VERSION_DLL RCDATA "../out/version.dll"
+RES_ONLINE_DLL  RCDATA "../out/ff2online.dll"
+RES_GUEST_EXE   RCDATA "../out/ff2guest.exe"
+RES_SETTINGS    RCDATA "../config/ff2wide.ini"
+RES_DDRAW_DLL   RCDATA "../third_party/cnc-ddraw/ddraw.dll"
+RES_DDRAW_INI   RCDATA "../config/ddraw.ini"
+RES_SHADER      RCDATA "../third_party/cnc-ddraw/Shaders/interpolation/catmull-rom-bilinear.glsl"
+RES_README      RCDATA "game-folder-readme.txt"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION 1, 0, 0, 0
+PRODUCTVERSION 1, 0, 0, 0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "FileDescription", "Feeding Frenzy 2 - Unofficial Remaster Setup"
+            VALUE "ProductName", "Feeding Frenzy 2 - Unofficial Remaster"
+            VALUE "FileVersion", "1.0.0"
+            VALUE "ProductVersion", "1.0.0"
+            VALUE "LegalCopyright", "MIT License. Not affiliated with PopCap or Electronic Arts."
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

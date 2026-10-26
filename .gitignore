@@ -1,0 +1,7 @@
+out/
+__pycache__/
+*.log
+# never commit the game's own files
+*.saf
+*.saf.original
+FeedingFrenzyTwo.exe
