@@ -69,7 +69,7 @@ for players 2 to 4.
 | Mouse (player 1, or another mouse) | move the mouse | left button | right button |
 | Gamepad | left stick | A | B |
 | Keyboard, left side | W A S D | Space | E or Left Shift |
-| Keyboard, right side | arrow keys | Right Ctrl | Enter |
+| Keyboard, right side | arrow keys | Right Ctrl | Enter or Right Shift |
 
 Each keyboard has both sides, so one keyboard is two players. In co-op, Space doesn't
 pause the game; P and Esc still do.

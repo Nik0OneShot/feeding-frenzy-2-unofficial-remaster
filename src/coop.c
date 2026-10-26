@@ -1471,13 +1471,13 @@ void __thiscall coop_popup_action_hook(BYTE *state, BYTE *action)
 // --- Joining and controls ---------------------------------------------------------------
 // During play, a device nobody has yet that presses one of its buttons joins as the next
 // free player: a gamepad (A, B, X, Y or Start), a keyboard's left keys (W A S D, Space to
-// dash, E or Left Shift for the special) or its right keys (arrows, Right Ctrl, Enter), a
-// mouse of its own (a click; mice.c), up to LOCAL_PLAYERS on this PC; or an online guest (as
-// it connects). It keeps that player for the session.
+// dash, E or Left Shift for the special) or its right keys (arrows, Right Ctrl to dash, Enter
+// or Right Shift for the special), a mouse of its own (a click; mice.c), up to LOCAL_PLAYERS
+// on this PC; or an online guest (as it connects). It keeps that player for the session.
 #define PAD_JOIN_BUTTONS       0xf010    // A B X Y, Start
 #define PAD_RETRY_MS           2000      // an empty gamepad slot is asked again after this
 static const int left_keys[] = { 'W', 'A', 'S', 'D', VK_SPACE, 'E', VK_LSHIFT };
-static const int right_keys[] = { VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT, VK_RCONTROL, VK_RETURN };
+static const int right_keys[] = { VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT, VK_RCONTROL, VK_RETURN, VK_RSHIFT };
 static WORD pad_held[4];
 static DWORD pad_retry[4];               // XInput on an empty slot is slow: asked now and then
 
@@ -1601,7 +1601,7 @@ static void read_device(int device, float *x, float *y, int *dash, int *special,
             if (keys_held(k, VK_UP)) *y -= 1;
             if (keys_held(k, VK_DOWN)) *y += 1;
             if (keys_held(k, VK_RCONTROL)) *dash = 1;
-            if (keys_held(k, VK_RETURN)) *special = 1;
+            if (keys_held(k, VK_RETURN) || keys_held(k, VK_RSHIFT)) *special = 1;
         }
         break;
     }
