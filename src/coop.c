@@ -147,6 +147,7 @@ static int in_stage(BYTE *stage, BYTE *player)
 #define STAGE_HUD              0x2e0
 #define FN_HUD_SET_LIVES       0x402550  // stdcall(Hud*, int lives)
 #define RESPAWN_DELAY          2.5f      // seconds, about as long as the game's own death
+#define HUNGER_STRIKE_LIVES    3         // each, at every level's start; no extra ones
 #define SPAWN_LEVEL            0x90      // int, growth level of the holder's fish
 #define SPAWN_DEATHS           0x94      // int; 0 at the end = "perfect" stage (0x447ef0)
 #define SPAWN_THRESHOLDS       0x6c      // vector begin, end at +0x70; 8 bytes per level
@@ -719,6 +720,7 @@ static void activate_player(int i)
     p->carry_x = p->carry_y = 0;
     p->dash_down = 1; // a button still held from joining doesn't dash
     p->special_down = 0;
+    if (competitive() && mode == MODE_HUNGER && p->growth < 0) p->lives = HUNGER_STRIKE_LIVES; // joining
     if (p->lives < 0) {
         int *lives = game_lives(g_stage);
         p->lives = lives && *lives > 0 ? *lives : 1;
@@ -774,10 +776,15 @@ void __thiscall coop_enter_hook(BYTE *player, BYTE *stage, int arg)
     }
     set_spawner_fish(player);
     creating = 0;
+    // Hunger Strike starts every level with HUNGER_STRIKE_LIVES each (the game's count is
+    // player 1's here)
+    int *lives = game_lives(stage), hunger = competitive() && mode == MODE_HUNGER;
+    if (hunger && lives) *lives = last_game_lives = HUNGER_STRIKE_LIVES;
     int joined = 0;
     for (int i = 1; i < MAX_PLAYERS; i++) {
         if (!pl[i].device || !pl[i].fish) continue;
-        if (pl[i].lives == 0) pl[i].lives = 1; // ran out last stage: back with one
+        if (hunger) pl[i].lives = HUNGER_STRIKE_LIVES;
+        else if (pl[i].lives == 0) pl[i].lives = 1; // ran out last stage: back with one
         activate_player(i);
         joined++;
     }
@@ -1160,6 +1167,12 @@ static void track_game_lives(void)
     if (!lives) return;
     for (int i = 0; i < MAX_PLAYERS; i++)
         if (i != keeper && present(i) && pl[i].lives < 0) pl[i].lives = *lives > 0 ? *lives : 1;
+    if (last_game_lives != -1000 && *lives > last_game_lives && competitive() && mode == MODE_HUNGER) {
+        // no extra lives in Hunger Strike: the game's taken straight back
+        log_printf("hunger strike: an extra life for player %d, taken back", keeper + 1);
+        *lives = last_game_lives;
+        refresh_lives();
+    }
     if (last_game_lives != -1000 && *lives > last_game_lives) {
         int gained = *lives - last_game_lives;
         for (int i = 0; i < MAX_PLAYERS; i++) {
