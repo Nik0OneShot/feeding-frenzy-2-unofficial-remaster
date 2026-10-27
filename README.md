@@ -29,8 +29,9 @@ the installer builds the changed game data on your PC, from your own copy.
 - **Fixes for co-op.** Clams, jellyfish, ink, poison, bonuses, bosses and night levels all
   work with several fish, along with crashes found on the way.
 - **Gameplay touches.**
-  - A golden minnow comes into every level at least once, swimming in where you can see it.
-    Now and then another one shows up in a long level.
+  - From level 10 on (where the original game first has one), a golden minnow comes into
+    every level at least once, swimming in where you can see it. Now and then another one
+    shows up in a long level.
   - After a perfect stage, your Frenzy chain holds until the mermaid arrives, instead of
     running out while the fish swim off the wider screen.
 

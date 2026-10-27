@@ -259,6 +259,24 @@ static int put_hud_extension(Saf *saf, const char *name, const char *jpg, const 
     "\t\t<phase max=\"1\" delay=\"" delay "\" />\n\t</spawn>\n"
 static const char GOLDEN_SPAWNS[] = GOLDEN_SPAWN("(6.0,25.0)") GOLDEN_SPAWN("(180.0,420.0)");
 
+// N for "resource/stages/stageN.xml", else -1.
+static int stage_number(const char *name)
+{
+    const char *prefix = "resource/stages/stage", *d = name + strlen(prefix);
+    if (strncmp(name, prefix, strlen(prefix)) || !isdigit((BYTE)*d)) return -1;
+    int n = 0;
+    while (isdigit((BYTE)*d)) n = n * 10 + (*d++ - '0');
+    return strcmp(d, ".xml") ? -1 : n;
+}
+
+static int contains(const BYTE *data, DWORD len, const char *s)
+{
+    size_t n = strlen(s);
+    for (DWORD i = 0; i + n <= len; i++)
+        if (!memcmp(data + i, s, n)) return 1;
+    return 0;
+}
+
 int mods_apply(Saf *saf, const BYTE *splash, DWORD splash_len, BYTE **splash_out, DWORD *splash_out_len,
                char *err, int err_len)
 {
@@ -388,16 +406,23 @@ int mods_apply(Saf *saf, const BYTE *splash, DWORD splash_len, BYTE **splash_out
         return 0;
     put_text(saf, "resource/stages/stagescreendata.xml", &screens);
 
-    // Golden minnows: one comes in every level (not the bonus rounds) at a random time in its
-    // first half minute or so, and now and then another in a long level. Two spawners do it:
-    // the sure one (supply 1: one in all) and a rare one, whose long timer few levels outlast.
-    // A spawner's timer runs on through the growth phases (FishSpawn 0x43a180). The few
-    // levels that had a golden minnow lose theirs.
+    // Golden minnows: from the first level that has one (stage10.xml; stage files are
+    // numbered in play order), one comes in every level (not the bonus rounds) at a random
+    // time in its first half minute or so, and now and then another in a long level. Two
+    // spawners do it: the sure one (supply 1: one in all) and a rare one, whose long timer few
+    // levels outlast. A spawner's timer runs on through the growth phases (FishSpawn
+    // 0x43a180). The few levels that had a golden minnow lose theirs.
+    int first_golden = -1;
     for (int i = 0; i < saf->count; i++) {
-        const char *name = saf->entries[i].name, *digits = name + strlen("resource/stages/stage");
-        if (strncmp(name, "resource/stages/stage", strlen("resource/stages/stage")) || !isdigit((BYTE)*digits)) continue;
-        while (isdigit((BYTE)*digits)) digits++;
-        if (strcmp(digits, ".xml")) continue;
+        int n = stage_number(saf->entries[i].name);
+        if (n >= 0 && (first_golden < 0 || n < first_golden) &&
+            contains(saf->entries[i].data, saf->entries[i].size, "<spawn class=\"GoldenFish\""))
+            first_golden = n;
+    }
+    if (first_golden < 0) return fail("%s", "No level has a golden minnow: is this the Steam version of the game?");
+    for (int i = 0; i < saf->count; i++) {
+        const char *name = saf->entries[i].name;
+        if (stage_number(name) < first_golden) continue;
         Text stage = entry_text(saf, name);
         // each "\n<spaces><spawn class="GoldenFish" ... </spawn>" out
         for (char *at = stage.p; (at = strstr(at, "<spawn class=\"GoldenFish\""));) {
