@@ -28,8 +28,8 @@ the installer builds the changed game data on your PC, from your own copy.
   They don't need the game: they see and hear yours, and each steers a fish of their own.
 - **Fixes for co-op.** Clams, jellyfish, ink, poison, bonuses, bosses and night levels all
   work with several fish, along with crashes found on the way.
-- **Gameplay touches.**
-  - From level 10 on (where the original game first has one), a golden minnow comes into
+- **Gameplay touches** (each can be switched off in the settings).
+  - From level 13 on (where the original game first has one), a golden minnow comes into
     every level at least once, swimming in where you can see it. Now and then another one
     shows up in a long level.
   - After a perfect stage, your Frenzy chain holds until the mermaid arrives, instead of
@@ -65,6 +65,8 @@ The game's **Options** screen also has:
 | `width` | Picture width at 600 tall; 0 = your screen's shape, 800 = the original 4:3 |
 | `fps` | Frame rate cap; 0 = your monitor's refresh rate |
 | `mouse_sensitivity` | How far the fish moves per pixel of mouse movement |
+| `golden_minnows` | 1 = a golden minnow in every level from level 13 on; 0 = as the original |
+| `frenzy_waits_for_mermaid` | 1 = after a perfect, the Frenzy chain waits for the mermaid; 0 = as the original |
 | `coop` | 1 = co-op on |
 | `coop_p2_color` .. `coop_p10_color` | Each player's colour (red,green,blue) |
 | `online` | 1 = host online games for friends |

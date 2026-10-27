@@ -1,7 +1,8 @@
-// Gameplay changes beyond the picture:
-//  - after a perfect stage, the Frenzy chain holds until the mermaid comes;
-//  - golden minnows come in where they can be seen (the stage data, changed by
-//    make_saf_mods.py / Setup, has one come in every level).
+// Gameplay changes beyond the picture, each with its setting in ff2wide.ini:
+//  - golden_minnows: from the first level with one on, a golden minnow in every level (the
+//    stage data, changed by make_saf_mods.py / Setup), coming in where it can be seen;
+//  - frenzy_waits_for_mermaid: after a perfect stage, the Frenzy chain holds until the
+//    mermaid comes.
 #include <windows.h>
 #include "log.h"
 #include "tweaks.h"
@@ -44,6 +45,34 @@ void __thiscall mermaid_state_update_hook(BYTE *state, void *update)
     }
 }
 
+// --- Golden minnows: the Remaster's or the original's --------------------------------------
+// The game data has both: the levels' own golden minnow spawners, and from the first level
+// with one on, the Remaster's two (a sure one and a rare one, make_saf_mods.py / Setup),
+// told apart by poolSize="1" (+0xa8; fish spawners don't use it otherwise, and it's 0 when
+// not given). FishSpawn's update (0x43a180, vtable slot 0x55787c, thiscall(spawn, update,
+// flag)) is what spawns; for a golden minnow spawner (behavior "GoldenFish", the std::string
+// at +0x60) it runs only for the set the golden_minnows setting picks.
+#define ADDR_FISH_SPAWN_UPDATE_SLOT 0x55787c
+#define FN_FISH_SPAWN_UPDATE   0x43a180
+#define SPAWN_BEHAVIOR         0x60      // std::string
+#define SPAWN_POOL_SIZE        0xa8
+#define REMASTER_POOL_SIZE     1
+typedef void (__thiscall *SpawnUpdate_t)(BYTE *spawn, void *update, DWORD flag);
+static int remaster_golden = 1;
+
+static const char *std_string(const BYTE *s)
+{
+    return *(const DWORD *)(s + 0x18) < 0x10 ? (const char *)(s + 4) : *(const char *const *)(s + 4);
+}
+
+void __thiscall fish_spawn_update_hook(BYTE *spawn, void *update, DWORD flag)
+{
+    if (!lstrcmpA(std_string(spawn + SPAWN_BEHAVIOR), "GoldenFish") &&
+        (*(int *)(spawn + SPAWN_POOL_SIZE) == REMASTER_POOL_SIZE) != remaster_golden)
+        return;
+    ((SpawnUpdate_t)FN_FISH_SPAWN_UPDATE)(spawn, update, flag);
+}
+
 // --- Golden minnows come in on screen --------------------------------------------------
 // GoldenFish::EnterStage (0x53fe72, vtable slot 0x55136c, thiscall(fish, stage, arg)) starts
 // its trail and enters it where its spawner put it: at the level's side, which in a level
@@ -83,8 +112,13 @@ void __thiscall golden_enter_hook(BYTE *fish, BYTE *stage, int arg)
     ((float *)(fish + FISH_START_POS))[1] = y;
 }
 
-void tweaks_init(int (*patch_u32)(DWORD, DWORD, DWORD))
+void tweaks_init(int golden_minnows, int frenzy_waits, int (*patch_u32)(DWORD, DWORD, DWORD))
 {
-    patch_u32(ADDR_MERMAID_STATE_UPDATE_SLOT, FN_MERMAID_STATE_UPDATE, (DWORD)mermaid_state_update_hook);
-    patch_u32(ADDR_GOLDEN_ENTER_SLOT, FN_GOLDEN_ENTER, (DWORD)golden_enter_hook);
+    remaster_golden = golden_minnows != 0;
+    log_printf("golden minnows: %s; Frenzy %s for the mermaid", remaster_golden ? "the Remaster's" : "the original's",
+               frenzy_waits ? "waits" : "doesn't wait");
+    patch_u32(ADDR_FISH_SPAWN_UPDATE_SLOT, FN_FISH_SPAWN_UPDATE, (DWORD)fish_spawn_update_hook);
+    if (frenzy_waits)
+        patch_u32(ADDR_MERMAID_STATE_UPDATE_SLOT, FN_MERMAID_STATE_UPDATE, (DWORD)mermaid_state_update_hook);
+    if (remaster_golden) patch_u32(ADDR_GOLDEN_ENTER_SLOT, FN_GOLDEN_ENTER, (DWORD)golden_enter_hook);
 }

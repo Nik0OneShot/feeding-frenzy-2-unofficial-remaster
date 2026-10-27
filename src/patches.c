@@ -1225,7 +1225,7 @@ void patches_apply(void)
         colors[i] = player_colors[i];
     }
     coop_init(ini_int("coop", 0), ini_float("coop_pad_speed", 700), colors, patch_u32);
-    tweaks_init(patch_u32);
+    tweaks_init(ini_int("golden_minnows", 1), ini_int("frenzy_waits_for_mermaid", 1), patch_u32);
     online_init(ini_int("online", 0), ini_int("online_port", 47600), ini_int("online_kbps", 6000),
                 ini_int("online_fps", 60), g_width, GAME_HEIGHT, ini_int("online_upnp", 1));
     static const BYTE push_bpp_field[6] = { 0xff, 0xb6, 0xf8, 0x00, 0x00, 0x00 }; // push [esi+0xf8]

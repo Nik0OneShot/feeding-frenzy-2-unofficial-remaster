@@ -254,7 +254,7 @@ static int put_hud_extension(Saf *saf, const char *name, const char *jpg, const 
 
 #define GOLDEN_SPAWN(delay)                                                                                             \
     "\t<spawn class=\"GoldenFish\" visual=\"minnowBrown\" size=\"0.9\" foodValue=\"200\" location=\"side\""            \
-    " showMenu=\"false\" showStageComplete=\"false\" behavior=\"GoldenFish\" supply=\"1\">\n"                            \
+    " showMenu=\"false\" showStageComplete=\"false\" behavior=\"GoldenFish\" supply=\"1\" poolSize=\"1\">\n"              \
     "\t\t<phase max=\"1\" delay=\"" delay "\" />\n\t\t<phase max=\"1\" delay=\"" delay "\" />\n"                         \
     "\t\t<phase max=\"1\" delay=\"" delay "\" />\n\t</spawn>\n"
 static const char GOLDEN_SPAWNS[] = GOLDEN_SPAWN("(6.0,25.0)") GOLDEN_SPAWN("(180.0,420.0)");
@@ -406,12 +406,14 @@ int mods_apply(Saf *saf, const BYTE *splash, DWORD splash_len, BYTE **splash_out
         return 0;
     put_text(saf, "resource/stages/stagescreendata.xml", &screens);
 
-    // Golden minnows: from the first level that has one (stage10.xml; stage files are
-    // numbered in play order), one comes in every level (not the bonus rounds) at a random
-    // time in its first half minute or so, and now and then another in a long level. Two
-    // spawners do it: the sure one (supply 1: one in all) and a rare one, whose long timer few
-    // levels outlast. A spawner's timer runs on through the growth phases (FishSpawn
-    // 0x43a180). The few levels that had a golden minnow lose theirs.
+    // Golden minnows: from the first level that has one (stage10.xml, level 13 counting
+    // the bonus rounds; stage files are numbered in play order), one comes in every level (not
+    // the bonus rounds) at a random time in its first half minute or so, and now and then
+    // another in a long level. Two spawners do it: the sure one (supply 1: one in all) and a
+    // rare one, whose long timer few levels outlast. A spawner's timer runs on through the
+    // growth phases (FishSpawn 0x43a180). They're marked poolSize="1" (fish spawners don't
+    // use it otherwise): the levels keep their own golden minnow spawners, and the patch runs
+    // either set, as the golden_minnows setting says (tweaks.c).
     int first_golden = -1;
     for (int i = 0; i < saf->count; i++) {
         int n = stage_number(saf->entries[i].name);
@@ -424,20 +426,6 @@ int mods_apply(Saf *saf, const BYTE *splash, DWORD splash_len, BYTE **splash_out
         const char *name = saf->entries[i].name;
         if (stage_number(name) < first_golden) continue;
         Text stage = entry_text(saf, name);
-        // each "\n<spaces><spawn class="GoldenFish" ... </spawn>" out
-        for (char *at = stage.p; (at = strstr(at, "<spawn class=\"GoldenFish\""));) {
-            char *from = at, *end = strstr(at, "</spawn>");
-            while (from > stage.p && (from[-1] == ' ' || from[-1] == '\t')) from--;
-            if (from == stage.p || from[-1] != '\n' || !end) {
-                at++;
-                continue;
-            }
-            from--;
-            end += strlen("</spawn>");
-            memmove(from, end, stage.len - (end - stage.p) + 1);
-            stage.len -= end - from;
-            at = from;
-        }
         char *close = NULL;
         for (char *c = stage.p; (c = strstr(c, "</stage>")); c++) close = c;
         if (!close) return fail("%s has no </stage>", name);
