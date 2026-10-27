@@ -224,23 +224,16 @@ void scene_before_draw(BYTE *engine)
     dump_on_change(root);
     stage_shown = find(root, "StageContainer", 0) != NULL;
 
-    // Options screen: the "Co-op:" checkbox FF2 Remaster adds (options.xml) shows the setting
-    // when the screen opens and stores any change (CheckBox vtable +0x160 IsChecked,
-    // +0x164 SetChecked, as the options screen itself uses them, 0x402d60 / 0x520768).
-    static BYTE *coop_check;
-    BYTE *check = find(root, "coopOptionCheck", 0);
+    // Options screen: the "Co-op:" button FF2 Remaster adds (options.xml) shows the mode (coop.c
+    // cycles it), and the Online checkbox beside it shows the setting when the screen opens
+    // and stores any change (CheckBox vtable +0x160 IsChecked, +0x164 SetChecked, as the
+    // options screen itself uses them, 0x402d60 / 0x520768); the address friends type in
+    // goes below.
+    coop_set_text(coop_button_text(find(root, "coopModeBtn", 0)), coop_mode_name());
     typedef BYTE (__thiscall *IsChecked_t)(BYTE *);
     typedef void (__thiscall *SetChecked_t)(BYTE *, int);
-    if (check && check != coop_check) {
-        ((SetChecked_t)(*(void ***)check)[0x164 / 4])(check, coop_requested());
-    } else if (check) {
-        int on = ((IsChecked_t)(*(void ***)check)[0x160 / 4])(check) != 0;
-        if (on != coop_requested()) coop_request(on);
-    }
-    coop_check = check;
-    // The same for the Online checkbox beside it, and the address friends type in below.
     static BYTE *online_check;
-    check = find(root, "onlineOptionCheck", 0);
+    BYTE *check = find(root, "onlineOptionCheck", 0);
     if (check && check != online_check) {
         ((SetChecked_t)(*(void ***)check)[0x164 / 4])(check, online_requested());
     } else if (check) {

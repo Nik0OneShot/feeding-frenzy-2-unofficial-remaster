@@ -360,13 +360,15 @@ int mods_apply(Saf *saf, const BYTE *splash, DWORD splash_len, BYTE **splash_out
         // Co-op and Online side by side, and under them at the bottom right (mirroring the
         // version number at the bottom left) the address friends type in, while hosting.
         !replace_once(&options, "</group> <!-- button group -->",
-                      "<group name=\"coopOptionGrp\" y=\"70\" x=\"-90\" >\n"
+                      // Co-op's is a button cycling the modes (coop.c): Off, Co-op, the competitive ones.
+                      "<group name=\"coopOptionGrp\" y=\"70\" x=\"-130\" >\n"
                       "\t\t\t\t\t<text name=\"coopTitleText\" x=\"0\" y=\"1\" string=\"Co-op:\" xAlign=\"right\""
                       " yAlign=\"middle\" font=\"textFontMed\" />\n"
-                      "\t\t\t\t\t<checkBox pivot=\"center\" name=\"coopOptionCheck\" action=\"toggleCoop\""
-                      " uncheckedImg=\"checkBtn_normal\" uncheckedOverImg=\"checkBtn_high\""
-                      " checkedImg=\"checkBtnChecked_normal\" checkedOverImg=\"checkBtnChecked_high\""
-                      " x=\"24\" y=\"0\" />\n"
+                      "\t\t\t\t\t<comboButton name=\"coopModeBtn\" x=\"72\" y=\"0\" action=\"coopMode\" string=\"Off\""
+                      " font=\"tinyBtnFont\" upColor=\"textEmphasisColor\" overColor=\"white\" xAlign=\"center\""
+                      " yAlign=\"middle\" overSound=\"resource/sounds/mouseOver.ogg\""
+                      " activeSound=\"resource/sounds/mouseDown.ogg\" upImg=\"tinyBtnA_normal\" overImg=\"tinyBtnA_high\""
+                      " pivot=\"center\" imageOffset=\"1,0\" />\n"
                       "\t\t\t\t</group>\n"
                       "\t\t\t\t<group name=\"onlineOptionGrp\" y=\"70\" x=\"110\" >\n"
                       "\t\t\t\t\t<text name=\"onlineTitleText\" x=\"0\" y=\"1\" string=\"Online:\" xAlign=\"right\""

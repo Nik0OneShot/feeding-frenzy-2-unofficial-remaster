@@ -24,7 +24,9 @@
 #include <stdio.h>
 #include <string.h>
 #include "log.h"
+#include "ambient.h"
 #include "coop.h"
+#include "../shared/label.h"
 #include "online.h"
 #include "../shared/proto.h"
 #include "mice.h"
@@ -89,6 +91,18 @@ typedef struct {
 static Player pl[MAX_PLAYERS];
 static int keeper;                       // the player whose fish the spawner holds
 
+// This level's mode (the Options screen's Co-op button, see Modes): playing together, or a
+// competitive one. A competitive round ends when someone wins (winner, a player index).
+enum { MODE_TOGETHER, MODE_HUNGER, MODE_COUNT };
+static int mode, mode_requested;
+static int requested;                    // co-op switched on (the Options button, coop_request)
+static int winner = -1;
+
+static int competitive(void)
+{
+    return enabled && mode != MODE_TOGETHER;
+}
+
 static int growth_left = -1;             // what we last left in the game's growth counter
 static int last_game_lives = -1000;      // to spot lives the game hands out
 static void *death_jingle;               // a player's death jingle is playing (see death_show)
@@ -134,6 +148,7 @@ static int in_stage(BYTE *stage, BYTE *player)
 #define RESPAWN_DELAY          2.5f      // seconds, about as long as the game's own death
 #define SPAWN_LEVEL            0x90      // int, growth level of the holder's fish
 #define SPAWN_DEATHS           0x94      // int; 0 at the end = "perfect" stage (0x447ef0)
+#define SPAWN_THRESHOLDS       0x6c      // vector begin, end at +0x70; 8 bytes per level
 
 static int player_dead(BYTE *player)
 {
@@ -147,10 +162,11 @@ static int *game_lives(BYTE *stage)
     return game ? (int *)(game + GAME_LIVES) : NULL;
 }
 
+// The game's unlimited lives, and Hunger Strike's: being eaten only costs time there.
 static int unlimited_lives(BYTE *stage)
 {
     BYTE *game = stage ? *(BYTE **)(stage + STAGE_GAME) : NULL;
-    return game && *(int *)(game + GAME_UNLIMITED_LIVES) == 1;
+    return (game && *(int *)(game + GAME_UNLIMITED_LIVES) == 1) || (competitive() && mode == MODE_HUNGER);
 }
 
 static BYTE *spawner_fish(void)
@@ -200,6 +216,8 @@ void __thiscall coop_spawn_hook(BYTE *spawn, int *count)
     ((Spawn_t)FN_PLAYER_SPAWN)(spawn, count);
     if (creating) return;
     apply_requested();
+    mode = enabled ? mode_requested : MODE_TOGETHER;
+    winner = -1;
     // Other fish still in their old stage's player list would haunt the new one (bound to the
     // mouse, invisible, "SORRY!"), so they leave first.
     for (int i = 0; i < MAX_PLAYERS; i++) {
@@ -773,6 +791,68 @@ static void hand_over(BYTE *spawn, int from, int to)
                lives ? *lives : 0);
 }
 
+// --- Hunger Strike --------------------------------------------------------------------
+// Everyone races their own growth bar: each grows from their own counter (see Growth), and
+// the first to fill the last size wins. The keeper grows the game's way, from the game's
+// counter, which holds the keeper's own growth here; the others the same way, with the
+// counter set to theirs for the update. A player other than the keeper who wins takes the
+// spawner, with their level and growth, so the game ends the stage for them as for anyone.
+static int *growth_counter(void);
+static void announce_winner(int i);
+
+static int level_count(void)
+{
+    int *begin = *(int **)(g_spawn + SPAWN_THRESHOLDS), *end = *(int **)(g_spawn + SPAWN_THRESHOLDS + 4);
+    return begin ? (int)(end - begin) / 2 : 0;
+}
+
+// The growth that completes size `level` (and grows to the next, or ends the stage).
+static int level_goal(int level)
+{
+    int *begin = *(int **)(g_spawn + SPAWN_THRESHOLDS);
+    return level >= 0 && level < level_count() ? begin[level * 2 + 1] : 0x7fffffff;
+}
+
+static void hunger_strike_growth(BYTE *spawn, void *a, void *b)
+{
+    int *level = (int *)(spawn + SPAWN_LEVEL), *counter = growth_counter(), keeper_level = *level, last = level_count() - 1;
+    BYTE *held = spawner_fish();
+    if (!counter || last < 0) return;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        Player *p = &pl[i];
+        if (i == keeper || !swimming(i) || p->growth < 0) continue;
+        int grew = 0;
+        set_spawner_fish(p->fish);
+        while (p->level < last && p->growth >= level_goal(p->level)) {
+            *level = p->level;
+            *counter = p->growth;
+            ((SpawnUpdate_t)FN_SPAWN_UPDATE)(spawn, a, b);
+            if (*level != p->level + 1 || !spawn[SPAWN_DONE]) break;
+            p->level++;
+            grew = 1;
+        }
+        set_spawner_fish(held);
+        *level = keeper_level;
+        *counter = pl[keeper].growth;
+        spawn[SPAWN_DONE] = 1;
+        if (grew) log_printf("hunger strike: player %d grew to size %d", i + 1, p->level + 1);
+    }
+    if (winner >= 0) return;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        int lvl = i == keeper ? keeper_level : pl[i].level;
+        if (!present(i) || pl[i].growth < 0 || lvl < last || pl[i].growth < level_goal(last)) continue;
+        announce_winner(i);
+        if (i != keeper) {
+            // the spawner's fish becomes the winner's, with its size: the stage ends as usual
+            set_spawner_fish(pl[i].fish); // our references on the two swap with the spawner's
+            keeper = i;
+            *level = pl[i].level;
+            *counter = pl[i].growth;
+        }
+        break;
+    }
+}
+
 static void spawn_update(BYTE *spawn, void *a, void *b)
 {
     BYTE *held = *(BYTE **)(spawn + SPAWN_FISH_HOLDER);
@@ -797,9 +877,18 @@ static void spawn_update(BYTE *spawn, void *a, void *b)
             held = pl[to].fish;
         }
     }
+    // Hunger Strike's lives are endless: the keeper's death costs none (the stage takes one
+    // after this update notices it).
+    if (competitive() && mode == MODE_HUNGER && !creating && spawn == g_spawn && g_stage && spawn[SPAWN_DONE] &&
+        held && player_dead(held) && game_lives(g_stage))
+        ++*game_lives(g_stage);
     ((SpawnUpdate_t)FN_SPAWN_UPDATE)(spawn, a, b);
     if (spawn == g_spawn && held == pl[keeper].fish) pl[keeper].level = *(int *)(spawn + SPAWN_LEVEL);
     if (!enabled || creating || spawn != g_spawn || !g_stage || !spawn[SPAWN_DONE] || held != pl[keeper].fish) return;
+    if (competitive() && mode == MODE_HUNGER) {
+        hunger_strike_growth(spawn, a, b);
+        return;
+    }
     int *level = (int *)(spawn + SPAWN_LEVEL);
     int keeper_level = *level;
     for (int i = 0; i < MAX_PLAYERS; i++) {
@@ -1061,7 +1150,6 @@ static void track_game_lives(void)
 // reaches the next size. Then nobody is behind the start of the new size. A death drops only
 // that player back to the start of their size.
 #define GAME_GROWTH            0x40
-#define SPAWN_THRESHOLDS       0x6c      // vector begin, end at +0x70; 8 bytes per level
 #define STAGE_BONUS            0x392     // bonus stage: growth works differently, left alone
 #define ADDR_EAT_UPDATE_SLOT   0x552df0
 #define FN_EAT_UPDATE          0x42a6d0
@@ -1082,9 +1170,17 @@ static int size_start(int level)
     return begin[(level - 1) * 2 + 1];
 }
 
-static int growth_most(void)
+static int hunger_strike(void)
+{
+    return competitive() && mode == MODE_HUNGER;
+}
+
+// What the game's counter holds: the furthest along, so everyone grows as soon as one gets
+// there; in Hunger Strike the keeper's own (everyone grows from their own there).
+static int growth_shown(void)
 {
     int most = 0;
+    if (hunger_strike()) return pl[keeper].growth > 0 ? pl[keeper].growth : 0;
     for (int i = 0; i < MAX_PLAYERS; i++)
         if (present(i) && pl[i].growth > most) most = pl[i].growth;
     return most;
@@ -1105,17 +1201,19 @@ static void sync_growth(void)
         // a respawn's drop: the fish the spawner looks after
         pl[keeper].growth = *counter;
     } else if (*counter > growth_left) {
-        // anything else the game handed out (golden fish, ...) goes to everyone
+        // anything else the game handed out (golden fish, ...) goes to everyone; in Hunger
+        // Strike to the keeper, whose counter it is
         for (int i = 0; i < MAX_PLAYERS; i++)
-            if (present(i) && pl[i].growth < *counter) pl[i].growth = *counter;
+            if (present(i) && pl[i].growth < *counter && (!hunger_strike() || i == keeper)) pl[i].growth = *counter;
     }
-    int start = size_start(*(int *)(g_spawn + SPAWN_LEVEL));
     for (int i = 0; i < MAX_PLAYERS; i++) {
         if (!present(i)) continue;
-        if (pl[i].growth < 0) pl[i].growth = *counter; // just joined: as far along as the team
+        // in Hunger Strike everyone's at their own size, else everyone's at the keeper's
+        int start = size_start(hunger_strike() && i != keeper ? pl[i].level : *(int *)(g_spawn + SPAWN_LEVEL));
+        if (pl[i].growth < 0) pl[i].growth = hunger_strike() ? start : *counter; // just joined
         if (pl[i].growth < start) pl[i].growth = start;
     }
-    *counter = growth_left = growth_most();
+    *counter = growth_left = growth_shown();
 }
 
 void __thiscall coop_eat_update_hook(BYTE *eater)
@@ -1130,7 +1228,7 @@ void __thiscall coop_eat_update_hook(BYTE *eater)
     *counter = pl[who].growth;
     ((EatUpdate_t)FN_EAT_UPDATE)(eater);
     pl[who].growth = *counter;
-    *counter = growth_left = growth_most();
+    *counter = growth_left = growth_shown();
 }
 
 // The HUD's meters (GrowMeter, Draw at vtable slot 0xa0 = 0x45faf0): a rectangle in its color
@@ -1458,15 +1556,151 @@ static int color_action(BYTE *action)
     return 1;
 }
 
+// --- Modes --------------------------------------------------------------------------------
+// The Options screen's Co-op button (options.xml, in the Co-op checkbox's place) cycles Off,
+// Co-op (together) and the competitive modes; coop and coop_mode in ff2wide.ini. A mode takes
+// effect when the next level starts, like co-op itself; Off at once (coop_request).
+static const char *const mode_keys[MODE_COUNT] = { "together", "hunger" };
+static const char *const mode_names[MODE_COUNT] = { "Co-op", "Hunger Strike" };
+
+const char *coop_mode_name(void)
+{
+    return requested ? mode_names[mode_requested] : "Off";
+}
+
+static int mode_action(BYTE *action)
+{
+    if (!action || strcmp(std_string(action), "coopMode")) return 0;
+    if (!requested) {
+        mode_requested = MODE_TOGETHER;
+        coop_request(1);
+    } else if (mode_requested + 1 < MODE_COUNT) {
+        mode_requested++;
+    } else {
+        mode_requested = MODE_TOGETHER;
+        coop_request(0);
+    }
+    ini_write("coop_mode", mode_keys[mode_requested]);
+    log_printf("mode: %s from the next level", coop_mode_name());
+    return 1;
+}
+
 void __thiscall coop_options_action_hook(BYTE *screen, BYTE *action)
 {
-    if (!color_action(action)) ((OptionsAction_t)FN_OPTIONS_ACTION)(screen, action);
+    if (!color_action(action) && !mode_action(action)) ((OptionsAction_t)FN_OPTIONS_ACTION)(screen, action);
 }
 
 void __thiscall coop_popup_action_hook(BYTE *state, BYTE *action)
 {
-    if (!color_action(action)) ((OptionsAction_t)FN_POPUP_ACTION)(state, action);
+    if (!color_action(action) && !mode_action(action)) ((OptionsAction_t)FN_POPUP_ACTION)(state, action);
 }
+
+// A competitive round's winner: "Player 2 wins!" across the screen in their color for a few
+// seconds (drawn into the frame like the online "You!" label, coop_draw_banner).
+#define BANNER_TIME            5.0f
+#define BANNER_TEXT_PX         64
+static float banner_timer;
+static Label banner;
+static int banner_for = -1;
+
+static void announce_winner(int i)
+{
+    winner = i;
+    banner_timer = BANNER_TIME;
+    log_printf("%s: player %d wins", mode_names[mode], i + 1);
+}
+
+void coop_draw_banner(void **back_surface, int width, int height)
+{
+    if (winner < 0 || banner_timer <= 0 || !back_surface) return;
+    if (banner_for != winner) {
+        char text[32];
+        // player 1 in its score's gold, the others in their tints
+        int r = 255, g = 230, b = 131;
+        if (winner > 0) r = (int)(pl[winner].tint[0] * 255), g = (int)(pl[winner].tint[1] * 255), b = (int)(pl[winner].tint[2] * 255);
+        free(banner.bgra);
+        sprintf(text, "Player %d wins!", winner + 1);
+        label_make_text(&banner, text, BANNER_TEXT_PX, r, g, b);
+        banner_for = winner;
+    }
+    int pitch;
+    BYTE *bits = ambient_lock(back_surface, &pitch);
+    if (!bits) return;
+    label_blit(&banner, bits, pitch, width, height, width / 2, height * 2 / 5 + banner.h / 2);
+    ambient_unlock(back_surface);
+}
+
+// --- Every mission open in the competitive modes, the save untouched ----------------------
+// The level map opens missions up to the save's furthest stage: the current profile
+// ([App +0xb4]) keeps a record per game mode (+0x40, 0x20 each, two of them), its furthest
+// stage at +0x18 (0x478d90 reads it so, clamped to the last one). While a competitive mode is
+// chosen, every record's is set to the last mission, the real records kept here; switched
+// back, they're put back. The profile save (0x4819c0) writes each record through one call
+// (0x481b9e, stdcall 0x473570(record)), which is wrapped: the real record is swapped in for
+// the write and back out after, so the save only ever gets the real progress.
+#define APP_PROFILE            0xb4
+#define PROFILE_RECORDS        0x40
+#define RECORD_SIZE            0x20
+#define RECORD_COUNT           2
+#define RECORD_MAX_STAGE       0x18
+#define ALL_STAGES             59
+#define ADDR_SAVE_RECORD_CALL  0x481b9e
+#define FN_SAVE_RECORD         0x473570
+static BYTE *opened_profile;
+static BYTE real_records[RECORD_COUNT * RECORD_SIZE];
+
+static int competitive_requested(void)
+{
+    return requested && mode_requested != MODE_TOGETHER;
+}
+
+static void open_missions(void)
+{
+    BYTE *app = *(BYTE **)ADDR_APP, *profile = app ? *(BYTE **)(app + APP_PROFILE) : NULL;
+    if (opened_profile && (opened_profile != profile || !competitive_requested())) {
+        if (opened_profile == profile) memcpy(profile + PROFILE_RECORDS, real_records, sizeof real_records);
+        log_printf("missions: back to the save's");
+        opened_profile = NULL;
+    }
+    if (!opened_profile && profile && competitive_requested()) {
+        memcpy(real_records, profile + PROFILE_RECORDS, sizeof real_records);
+        for (int r = 0; r < RECORD_COUNT; r++)
+            *(int *)(profile + PROFILE_RECORDS + r * RECORD_SIZE + RECORD_MAX_STAGE) = ALL_STAGES;
+        opened_profile = profile;
+        log_printf("missions: all open for the competitive modes");
+    }
+}
+
+// Exchanges a record with its real copy while missions are opened (twice puts it back).
+void __cdecl coop_record_swap(BYTE *record)
+{
+    if (!opened_profile) return;
+    int r = (int)(record - (opened_profile + PROFILE_RECORDS));
+    if (r < 0 || r % RECORD_SIZE || r / RECORD_SIZE >= RECORD_COUNT) return;
+    BYTE live[RECORD_SIZE];
+    memcpy(live, record, RECORD_SIZE);
+    memcpy(record, real_records + r, RECORD_SIZE);
+    memcpy(real_records + r, live, RECORD_SIZE);
+}
+
+void coop_save_record_thunk(void);
+__asm__(
+    ".globl _coop_save_record_thunk\n"
+    "_coop_save_record_thunk:\n"
+    "    pushal\n"
+    "    pushl 36(%esp)\n"          // the record: the real one in
+    "    call _coop_record_swap\n"
+    "    addl $4, %esp\n"
+    "    popal\n"
+    "    pushl 4(%esp)\n"           // written (stdcall, takes its argument)
+    "    movl $0x473570, %eax\n"
+    "    call *%eax\n"
+    "    pushal\n"
+    "    pushl 36(%esp)\n"          // and the live one back
+    "    call _coop_record_swap\n"
+    "    addl $4, %esp\n"
+    "    popal\n"
+    "    ret $4\n");
 
 // --- Joining and controls ---------------------------------------------------------------
 // During play, a device nobody has yet that presses one of its buttons joins as the next
@@ -1751,6 +1985,8 @@ void coop_frame(BYTE *engine)
     // others swim on.
     int playing = (relative && relative[0x50]) || GetTickCount() - keeper_dying_tick < 200;
     take_out_players();
+    open_missions();
+    if (banner_timer > 0) banner_timer -= dt;
     mice_set_play(enabled && g_stage && playing);
     now_playing = playing;
     if (!enabled || !g_stage || !g_spawn) return;
@@ -1944,7 +2180,6 @@ int coop_player_positions(float (*pos)[2], int max)
 // takes the other fish out at once (in the next frame, take_out_players), and so does online
 // play for the guests' fish. The hooks stay installed either way and do nothing while co-op
 // is off; only the Space-pauses check is swapped.
-static int requested;
 static int (*patch_u32_fn)(DWORD, DWORD, DWORD);
 
 static void apply_requested(void)
@@ -2126,9 +2361,14 @@ void __thiscall coop_stage_reset_hook(BYTE *stage)
     ((StageReset_t)FN_STAGE_RESET)(stage);
 }
 
-int coop_init(int enable, float speed, const char *const *player_colors, int (*patch_u32)(DWORD, DWORD, DWORD))
+int coop_init(int enable, const char *mode_key, float speed, const char *const *player_colors,
+              int (*patch_u32)(DWORD, DWORD, DWORD))
 {
     patch_u32_fn = patch_u32;
+    for (int i = 0; i < MODE_COUNT; i++)
+        if (mode_key && !lstrcmpiA(mode_key, mode_keys[i])) mode_requested = i;
+    patch_u32(ADDR_SAVE_RECORD_CALL + 1, FN_SAVE_RECORD - (ADDR_SAVE_RECORD_CALL + 5),
+              (DWORD)coop_save_record_thunk - (ADDR_SAVE_RECORD_CALL + 5));
     patch_u32(ADDR_OPTIONS_ACTION_SLOT, FN_OPTIONS_ACTION, (DWORD)coop_options_action_hook);
     patch_u32(ADDR_POPUP_ACTION_SLOT, FN_POPUP_ACTION, (DWORD)coop_popup_action_hook);
     for (int i = 0; i < (int)(sizeof splat_calls / sizeof *splat_calls); i++)

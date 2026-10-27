@@ -6,7 +6,9 @@
 
 // player_colors[i]: player i+1's color from ff2wide.ini ("r,g,b"), [0] unused; NULL or ""
 // for the default.
-int coop_init(int enable, float speed, const char *const *player_colors, int (*patch_u32)(DWORD, DWORD, DWORD));
+// mode_key: coop_mode in ff2wide.ini ("together", "hunger").
+int coop_init(int enable, const char *mode_key, float speed, const char *const *player_colors,
+              int (*patch_u32)(DWORD, DWORD, DWORD));
 void coop_frame(BYTE *engine);
 void coop_before_draw(void);
 void coop_after_draw(void);
@@ -26,6 +28,10 @@ int coop_requested(void);
 void coop_request(int on);
 // Online play was switched off: the guests' fish are taken out (in the next frame).
 void coop_online_closed(void);
+// The Options screen's Co-op button shows this: "Off", or the mode co-op plays in.
+const char *coop_mode_name(void);
+// A competitive round's winner, across the frame (back buffer, width x height) for a while.
+void coop_draw_banner(void **back_surface, int width, int height);
 // The Options screen's color buttons show these (player 2 .. MAX_PLAYERS; cycled by the
 // buttons).
 const char *coop_color_name(int player);

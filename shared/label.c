@@ -7,7 +7,7 @@
 static const BYTE edge[3] = { 40, 24, 16 }; // B, G, R: dark navy
 
 // Draws the text and the arrow in white on black into a DIB: a coverage mask.
-static BYTE *mask(HDC dc, HBITMAP *bmp, int w, int h, const char *text, int text_w, int text_h, int dx, int dy)
+static BYTE *mask(HDC dc, HBITMAP *bmp, int w, int h, const char *text, int text_w, int text_h, int dx, int dy, int arrow)
 {
     BITMAPINFO bi;
     memset(&bi, 0, sizeof bi);
@@ -26,18 +26,20 @@ static BYTE *mask(HDC dc, HBITMAP *bmp, int w, int h, const char *text, int text
     int x = (w - text_w) / 2 + dx, y = OUTLINE + 1 + dy;
     TextOutA(dc, x, y, text, lstrlenA(text));
     // the arrow: a small triangle under the word, pointing down at the fish
-    int a = text_h / 3, cx = w / 2 + dx, top = y + text_h;
-    POINT tri[3] = { { cx - a, top }, { cx + a, top }, { cx, top + a } };
-    HGDIOBJ brush = SelectObject(dc, GetStockObject(WHITE_BRUSH)), pen = SelectObject(dc, GetStockObject(NULL_PEN));
-    Polygon(dc, tri, 3);
-    SelectObject(dc, brush);
-    SelectObject(dc, pen);
+    if (arrow) {
+        int a = text_h / 3, cx = w / 2 + dx, top = y + text_h;
+        POINT tri[3] = { { cx - a, top }, { cx + a, top }, { cx, top + a } };
+        HGDIOBJ brush = SelectObject(dc, GetStockObject(WHITE_BRUSH)), pen = SelectObject(dc, GetStockObject(NULL_PEN));
+        Polygon(dc, tri, 3);
+        SelectObject(dc, brush);
+        SelectObject(dc, pen);
+    }
     GdiFlush();
     SelectObject(dc, old);
     return bits;
 }
 
-int label_make(Label *l, const char *text, int text_px)
+static int make(Label *l, const char *text, int text_px, const int *color, int arrow)
 {
     memset(l, 0, sizeof *l);
     HDC dc = CreateCompatibleDC(NULL);
@@ -46,15 +48,15 @@ int label_make(Label *l, const char *text, int text_px)
     HGDIOBJ old_font = SelectObject(dc, font);
     SIZE size;
     GetTextExtentPoint32A(dc, text, lstrlenA(text), &size);
-    int w = size.cx + 2 * OUTLINE + 4, h = size.cy + size.cy / 3 + 2 * OUTLINE + 3;
+    int w = size.cx + 2 * OUTLINE + 4, h = size.cy + (arrow ? size.cy / 3 : 0) + 2 * OUTLINE + 3;
     HBITMAP fill_bmp, edge_bmp;
-    BYTE *fill = mask(dc, &fill_bmp, w, h, text, size.cx, size.cy, 0, 0);
+    BYTE *fill = mask(dc, &fill_bmp, w, h, text, size.cx, size.cy, 0, 0, arrow);
     BYTE *grown = fill ? calloc((size_t)w * h, 1) : NULL;
     // the outline: the same shape drawn shifted all around, the largest coverage kept
     for (int dy = -OUTLINE; dy <= OUTLINE && grown; dy++)
         for (int dx = -OUTLINE; dx <= OUTLINE; dx++) {
             if (dx * dx + dy * dy > OUTLINE * OUTLINE + 1) continue;
-            BYTE *m = mask(dc, &edge_bmp, w, h, text, size.cx, size.cy, dx, dy);
+            BYTE *m = mask(dc, &edge_bmp, w, h, text, size.cx, size.cy, dx, dy, arrow);
             if (!m) continue;
             for (int i = 0; i < w * h; i++)
                 if (m[i * 4] > grown[i]) grown[i] = m[i * 4];
@@ -66,8 +68,9 @@ int label_make(Label *l, const char *text, int text_px)
         l->bgra = malloc((size_t)w * h * 4);
         for (int i = 0; i < w * h; i++) {
             int f = fill[i * 4], o = grown[i];          // coverage 0..255
-            int a = f + o * (255 - f) / 255;            // white over the edge
-            for (int c = 0; c < 3; c++) l->bgra[i * 4 + c] = (BYTE)(f + edge[c] * o * (255 - f) / (255 * 255));
+            int a = f + o * (255 - f) / 255;            // the color over the edge
+            for (int c = 0; c < 3; c++)
+                l->bgra[i * 4 + c] = (BYTE)(f * color[2 - c] / 255 + edge[c] * o * (255 - f) / (255 * 255));
             l->bgra[i * 4 + 3] = (BYTE)a;
         }
     }
@@ -77,6 +80,18 @@ int label_make(Label *l, const char *text, int text_px)
     DeleteObject(font);
     DeleteDC(dc);
     return l->bgra != NULL;
+}
+
+int label_make(Label *l, const char *text, int text_px)
+{
+    static const int white[3] = { 255, 255, 255 };
+    return make(l, text, text_px, white, 1);
+}
+
+int label_make_text(Label *l, const char *text, int text_px, int r, int g, int b)
+{
+    const int color[3] = { r, g, b };
+    return make(l, text, text_px, color, 0);
 }
 
 void label_blit(const Label *l, BYTE *bits, int pitch, int w, int h, int x, int y)

@@ -26,6 +26,9 @@ the installer builds the changed game data on your PC, from your own copy.
   the camera zooms out to keep everyone in view.
 - **Online co-op, up to 10 players.** Friends join from their own PCs with `ff2guest.exe`.
   They don't need the game: they see and hear yours, and each steers a fish of their own.
+- **Competitive modes.** Pick one with the Co-op button in Options, then any mission on the
+  map; your save keeps its real progress.
+  - **Hunger Strike:** everyone races their own growth bar, and the first to fill it wins.
 - **Fixes for co-op.** Clams, jellyfish, ink, poison, bonuses, bosses and night levels all
   work with several fish, along with crashes found on the way.
 - **Gameplay touches** (each can be switched off in the settings).
@@ -55,7 +58,8 @@ game may differ, so it asks before installing on them.
 
 The settings are in `ff2wide.ini` in the game folder; every setting is explained in the file.
 The game's **Options** screen also has:
-- **Co-op:** on from the next level; switched off, the other fish leave straight away.
+- **Co-op:** Off, Co-op or a competitive mode, from the next level; switched off, the other
+  fish leave straight away.
 - **Online:** hosting starts or stops straight away, and the screen shows the address
   friends type in.
 - **Colour buttons** for players 2 to 4.
@@ -68,6 +72,7 @@ The game's **Options** screen also has:
 | `golden_minnows` | 1 = a golden minnow in every level from level 13 on; 0 = as the original |
 | `frenzy_waits_for_mermaid` | 1 = after a perfect, the Frenzy chain waits for the mermaid; 0 = as the original |
 | `coop` | 1 = co-op on |
+| `coop_mode` | `together`, or a competitive mode: `hunger` (Hunger Strike) |
 | `coop_p2_color` .. `coop_p10_color` | Each player's colour (red,green,blue) |
 | `online` | 1 = host online games for friends |
 | `online_port`, `online_upnp` | The port guests connect to, and whether to ask the router to open it |

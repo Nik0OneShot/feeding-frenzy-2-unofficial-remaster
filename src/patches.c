@@ -313,6 +313,7 @@ void __thiscall display_present_hook(BYTE *display, void *app)
         you_label_spot(1, spot, &ok);
         if (ok) online_draw_you(back, spot[0], spot[1]);
     }
+    coop_draw_banner(back, g_width, GAME_HEIGHT);
     LONGLONG t = now_ticks();
     ((Present_t)FN_DISPLAY_PRESENT)(display, app);
     present_ticks += now_ticks() - t;
@@ -1224,7 +1225,9 @@ void patches_apply(void)
         GetPrivateProfileStringA("ff2wide", key, "", player_colors[i], sizeof player_colors[i], ini_path);
         colors[i] = player_colors[i];
     }
-    coop_init(ini_int("coop", 0), ini_float("coop_pad_speed", 700), colors, patch_u32);
+    char mode[24];
+    GetPrivateProfileStringA("ff2wide", "coop_mode", "together", mode, sizeof mode, ini_path);
+    coop_init(ini_int("coop", 0), mode, ini_float("coop_pad_speed", 700), colors, patch_u32);
     tweaks_init(ini_int("golden_minnows", 1), ini_int("frenzy_waits_for_mermaid", 1), patch_u32);
     online_init(ini_int("online", 0), ini_int("online_port", 47600), ini_int("online_kbps", 6000),
                 ini_int("online_fps", 60), g_width, GAME_HEIGHT, ini_int("online_upnp", 1));
