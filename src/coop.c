@@ -163,11 +163,10 @@ static int *game_lives(BYTE *stage)
     return game ? (int *)(game + GAME_LIVES) : NULL;
 }
 
-// The game's unlimited lives, and Hunger Strike's: being eaten only costs time there.
 static int unlimited_lives(BYTE *stage)
 {
     BYTE *game = stage ? *(BYTE **)(stage + STAGE_GAME) : NULL;
-    return (game && *(int *)(game + GAME_UNLIMITED_LIVES) == 1) || (competitive() && mode == MODE_HUNGER);
+    return game && *(int *)(game + GAME_UNLIMITED_LIVES) == 1;
 }
 
 static BYTE *spawner_fish(void)
@@ -200,6 +199,14 @@ static int swimming(int i)
 {
     BYTE *f = pl[i].fish;
     return f && pl[i].entered && !pl[i].out && g_stage && in_stage(g_stage, f) && !player_dead(f);
+}
+
+// Out of lives in a competitive round: out for good (no extra life brings them back), and
+// crossed out on the HUD. The keeper never is: the game looks after its lives, and it hands
+// the spawner over on its last one (hand_over).
+static int eliminated(int i)
+{
+    return competitive() && present(i) && pl[i].out && pl[i].lives <= 0 && i != keeper;
 }
 
 // More than one player takes part (with player 1 alone the game is left as it is).
@@ -862,6 +869,25 @@ static void hunger_strike_growth(BYTE *spawn, void *a, void *b)
         if (grew) log_printf("hunger strike: player %d grew to size %d", i + 1, p->level + 1);
     }
     if (winner >= 0) return;
+    // the last one standing wins, whatever their size: the stage is ended for them as for a
+    // full bar (their size's counted as the last)
+    int taking_part = 0, standing = 0, last_standing = -1;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (!present(i)) continue;
+        taking_part++;
+        if (!eliminated(i)) standing++, last_standing = i;
+    }
+    if (taking_part >= 2 && standing == 1) {
+        announce_winner(last_standing);
+        log_printf("hunger strike: player %d is the last one standing", last_standing + 1);
+        if (last_standing != keeper) {
+            set_spawner_fish(pl[last_standing].fish); // our references on the two swap with the spawner's
+            keeper = last_standing;
+        }
+        *level = last;
+        *counter = pl[keeper].growth = level_goal(last);
+        return;
+    }
     for (int i = 0; i < MAX_PLAYERS; i++) {
         int lvl = i == keeper ? keeper_level : pl[i].level;
         if (!present(i) || pl[i].growth < 0 || lvl < last || pl[i].growth < level_goal(last)) continue;
@@ -901,11 +927,6 @@ static void spawn_update(BYTE *spawn, void *a, void *b)
             held = pl[to].fish;
         }
     }
-    // Hunger Strike's lives are endless: the keeper's death costs none (the stage takes one
-    // after this update notices it).
-    if (competitive() && mode == MODE_HUNGER && !creating && spawn == g_spawn && g_stage && spawn[SPAWN_DONE] &&
-        held && player_dead(held) && game_lives(g_stage))
-        ++*game_lives(g_stage);
     ((SpawnUpdate_t)FN_SPAWN_UPDATE)(spawn, a, b);
     if (spawn == g_spawn && held == pl[keeper].fish) pl[keeper].level = *(int *)(spawn + SPAWN_LEVEL);
     if (!enabled || creating || spawn != g_spawn || !g_stage || !spawn[SPAWN_DONE] || held != pl[keeper].fish) return;
@@ -976,18 +997,18 @@ void __thiscall coop_leave_hook(BYTE *player)
 // Each player has their own: the keeper uses the game's count (GameState +0x10), the others
 // their own, starting from the game's count when they join. Lives the game gives (extra life
 // every so many points, 1-up bubbles) go to everyone. A continue after a game over refills
-// everyone. The HUD's life count (Hud +0x198, a TextItem) shows "3/3/3", each number but
-// player 1's in that player's tint (HudSetLives, 0x402550, stdcall(Hud*, int lives), is
-// replaced; smaller with more numbers): TextItem::SetNumber (0x408920, stdcall(TextItem*, int, const std::string
-// *prefix)). The numbers are right-aligned, so drawing the end of the text alone on top lands
-// exactly on that part: from each player's number on, in that player's tint, then the rest
-// after it plain again (the TextItem gets a private vtable with its own Draw).
+// everyone. In a competitive round a player out of lives is out for good (eliminated), and
+// crossed out on the HUD. The HUD's life count (Hud +0x198, a TextItem) shows "3/X/2", each
+// number but player 1's in that player's tint (HudSetLives, 0x402550, stdcall(Hud*, int
+// lives), is replaced; smaller with more numbers; the text is set whole, text_assign). The
+// numbers are right-aligned, so drawing the end of the text alone on top lands exactly on
+// that part: from each player's number on, in that player's tint, then the rest after it
+// plain again (the TextItem gets a private vtable with its own Draw).
 #define FN_HUD_SET_LIVES_START 0x402550
 #define HUD_LIVES_TEXT         0x198
 #define VTBL_TEXT_ITEM         0x55c32c
 #define FN_TEXT_ITEM_DRAW      0x4471b0  // vtable +0xa0, thiscall(TextItem*, DrawContext*)
 #define VTBL_DRAW              0xa0
-#define FN_TEXT_SET_NUMBER     0x408920
 #define FN_STRING_FROM_CSTR    0x44be60  // std::string(const char *), thiscall
 #define FN_STRING_FREE         0x448860  // thiscall(std::string*, 1, 0)
 #define DRAWCTX_STATE_DEQUE    0x38
@@ -1002,17 +1023,6 @@ static BYTE *lives_text;
 static void **lives_vtable;
 static int shown_count, shown[MAX_PLAYERS], shown_who[MAX_PLAYERS];
 
-static void set_text_number(BYTE *text, int n, const char *prefix)
-{
-    typedef void (__thiscall *StrCtor_t)(void *, const char *);
-    typedef void (__thiscall *StrFree_t)(void *, int, int);
-    typedef void (__stdcall *SetNumber_t)(BYTE *, int, void *);
-    DWORD str[8];
-    ((StrCtor_t)FN_STRING_FROM_CSTR)(str, prefix);
-    ((SetNumber_t)FN_TEXT_SET_NUMBER)(text, n, str);
-    ((StrFree_t)FN_STRING_FREE)(str, 1, 0);
-}
-
 static float *draw_state(BYTE *ctx)
 {
     BYTE *deque = ctx + DRAWCTX_STATE_DEQUE;
@@ -1024,21 +1034,25 @@ static float *draw_state(BYTE *ctx)
     return (float *)map[i];
 }
 
-// The numbers from shown[from] on, joined by "/", after a "/" with slash. SetNumber puts its
-// text in front of the number: everything but the last number goes there.
-static void lives_prefix(char *out, int from, int slash)
+// The numbers from shown[from] on, joined by "/", after a "/" with slash; an eliminated
+// player's (-1) is crossed out, an X.
+static void lives_string(char *out, int from, int slash)
 {
     int o = 0;
     if (slash) out[o++] = '/';
-    for (int k = from; k < shown_count - 1; k++) o += sprintf(out + o, "%d/", shown[k]);
+    for (int k = from; k < shown_count; k++)
+        o += shown[k] < 0 ? sprintf(out + o, k + 1 < shown_count ? "X/" : "X")
+                          : sprintf(out + o, k + 1 < shown_count ? "%d/" : "%d", shown[k]);
     out[o] = 0;
 }
 
+static void text_assign(BYTE *text, const char *value);
+
 static void set_lives_from(BYTE *text, int from, int slash)
 {
-    char prefix[64];
-    lives_prefix(prefix, from, slash);
-    set_text_number(text, shown_count ? shown[shown_count - 1] : 0, prefix);
+    char value[80];
+    lives_string(value, from, slash);
+    text_assign(text, value);
 }
 
 // The draw state's position, scale, rotation, opacity and color, and its flags: drawing text
@@ -1059,8 +1073,7 @@ void __thiscall lives_text_draw(BYTE *text, BYTE *ctx)
     // back whenever it was changed.
     if (text == lives_text && shown_count > 1) {
         char want[80];
-        lives_prefix(want, 0, 0);
-        sprintf(want + strlen(want), "%d", shown[shown_count - 1]);
+        lives_string(want, 0, 0);
         if (strcmp(text_string(text), want) != 0) set_lives_from(text, 0, 0);
     }
     BYTE saved[STATE_PLAIN_SIZE], saved_flags[STATE_FLAGS_SIZE];
@@ -1098,7 +1111,7 @@ static void show_lives(BYTE *hud, int game_count)
     for (int i = 0; i < MAX_PLAYERS; i++) {
         if (i != 0 && !(together && present(i))) continue;
         int v = i == keeper ? game_count : pl[i].lives;
-        values[n] = v < 0 ? 0 : v > 99 ? 99 : v;
+        values[n] = eliminated(i) ? -1 : v < 0 ? 0 : v > 99 ? 99 : v;
         who[n++] = i;
     }
     // The stage update (Stage vtable +0x14, 0x486950) sets the count every frame during play;
@@ -1150,7 +1163,7 @@ static void track_game_lives(void)
     if (last_game_lives != -1000 && *lives > last_game_lives) {
         int gained = *lives - last_game_lives;
         for (int i = 0; i < MAX_PLAYERS; i++) {
-            if (i == keeper || pl[i].lives < 0) continue;
+            if (i == keeper || pl[i].lives < 0 || eliminated(i)) continue;
             int was_out = present(i) && pl[i].out && pl[i].lives <= 0;
             pl[i].lives = last_game_lives < 0 ? *lives : pl[i].lives + gained;
             if (was_out && pl[i].lives > 0) {
@@ -1666,11 +1679,18 @@ static void player_rgb(int i, int *rgb)
 #define WAITING_LINE           28
 static Label waiting_label[MAX_PLAYERS];
 static int waiting_rgb[MAX_PLAYERS][3];
+static char waiting_said[MAX_PLAYERS][48];
 
 static int waiting_on_lives(int i)
 {
     return enabled && g_stage && now_playing && team() && present(i) && pl[i].out && i != keeper &&
            pl[i].lives <= 0 && !unlimited_lives(g_stage);
+}
+
+// Its line: waiting, or in a competitive round, out for good.
+static void waiting_text(int i, char *out)
+{
+    sprintf(out, competitive() ? "Player %d is out!" : "Player %d is waiting on lives...", i + 1);
 }
 
 void coop_draw_overlays(void **back_surface, int width, int height)
@@ -1694,12 +1714,13 @@ void coop_draw_overlays(void **back_surface, int width, int height)
         if (!waiting_on_lives(i)) continue;
         int rgb[3];
         player_rgb(i, rgb);
-        if (!waiting_label[i].bgra || memcmp(rgb, waiting_rgb[i], sizeof rgb)) {
-            char text[48];
+        char text[48];
+        waiting_text(i, text);
+        if (!waiting_label[i].bgra || memcmp(rgb, waiting_rgb[i], sizeof rgb) || strcmp(text, waiting_said[i])) {
             free(waiting_label[i].bgra);
-            sprintf(text, "Player %d is waiting on lives...", i + 1);
             label_make_text(&waiting_label[i], text, WAITING_TEXT_PX, rgb[0], rgb[1], rgb[2]);
             memcpy(waiting_rgb[i], rgb, sizeof rgb);
+            strcpy(waiting_said[i], text);
         }
         label_blit(&waiting_label[i], bits, pitch, width, height, width / 2, WAITING_TOP + WAITING_LINE * line++);
     }
@@ -2364,6 +2385,12 @@ static void format_points(char *out, const char *prefix, int n)
 void coop_set_text(BYTE *text, const char *value)
 {
     if (!text || *(DWORD *)text != VTBL_TEXT_ITEM || strcmp(text_string(text), value) == 0) return;
+    text_assign(text, value);
+}
+
+// The same for any TextItem (the lives counter has a vtable of its own).
+static void text_assign(BYTE *text, const char *value)
+{
     typedef void (__thiscall *Assign_t)(BYTE *, const void *, int, int);
     typedef void (__stdcall *Layout_t)(BYTE *, BYTE *);
     typedef void (__thiscall *Refresh_t)(BYTE *);

@@ -29,6 +29,7 @@ the installer builds the changed game data on your PC, from your own copy.
 - **Competitive modes.** Pick one with the Co-op button in Options, then any mission on the
   map; your save keeps its real progress.
   - **Hunger Strike:** everyone races their own growth bar, and the first to fill it wins.
+    Run out of lives and you're out; the last one left wins, whatever their size.
 - **Fixes for co-op.** Clams, jellyfish, ink, poison, bonuses, bosses and night levels all
   work with several fish, along with crashes found on the way.
 - **Gameplay touches** (each can be switched off in the settings).
