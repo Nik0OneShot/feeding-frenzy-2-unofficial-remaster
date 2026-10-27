@@ -1683,6 +1683,58 @@ int coop_guest_player(int guest)
     return 0;
 }
 
+// --- Taking players out mid-level (co-op or online play switched off) -------------------
+#define TAKE_OUT_ALL           1         // co-op off: everyone but player 1
+#define TAKE_OUT_GUESTS        2         // online play off: the guests
+static int take_out_pending;
+
+static int taken_out(int i, int all)
+{
+    return i > 0 && pl[i].device && (all || DEV_KIND(pl[i].device) == DEV_GUEST);
+}
+
+// The keeper is being taken out: player 1 takes the spawner back (its fish entered again if
+// it's out, with at least one life), and the game's count is player 1's again. Not while the
+// spawner is busy with the keeper's death or respawn: then 0, to try again next frame.
+static int give_back_to_player1(void)
+{
+    if (!pl[0].fish || !g_spawn[SPAWN_DONE]) return 0;
+    if (!swimming(0)) {
+        if (pl[0].lives <= 0) pl[0].lives = 1;
+        activate_player(0);
+    }
+    int *lives = game_lives(g_stage);
+    if (lives) {
+        pl[keeper].lives = *lives;
+        *lives = pl[0].lives > 0 ? pl[0].lives : 1;
+        last_game_lives = *lives;
+    }
+    set_spawner_fish(pl[0].fish); // our references on the two swap with the spawner's
+    log_printf("co-op: player 1 takes over from player %d", keeper + 1);
+    keeper = 0;
+    return 1;
+}
+
+static void take_out_players(void)
+{
+    if (!take_out_pending) return;
+    int all = take_out_pending & TAKE_OUT_ALL;
+    if (g_stage && g_spawn && keeper != 0 && taken_out(keeper, all) && !give_back_to_player1()) return;
+    for (int i = 1; i < MAX_PLAYERS; i++) {
+        if (!taken_out(i, all)) continue;
+        if (g_stage && present(i)) {
+            if (!pl[i].out && in_stage(g_stage, pl[i].fish)) ((Leave_t)FN_PLAYER_LEAVE)(pl[i].fish);
+            log_printf("co-op: player %d taken out (%s switched off)", i + 1, all ? "co-op" : "online play");
+        }
+        pl[i].entered = pl[i].out = 0;
+        pl[i].growth = -1;
+        if (DEV_KIND(pl[i].device) == DEV_GUEST) pl[i].device = DEV_NONE; // their place is free again
+    }
+    take_out_pending = 0;
+    if (all) apply_requested();
+    refresh_lives();
+}
+
 void coop_frame(BYTE *engine)
 {
     static LARGE_INTEGER freq, last;
@@ -1698,6 +1750,7 @@ void coop_frame(BYTE *engine)
     // In play (not menus, panels, between stages), or the keeper's death is playing while
     // others swim on.
     int playing = (relative && relative[0x50]) || GetTickCount() - keeper_dying_tick < 200;
+    take_out_players();
     mice_set_play(enabled && g_stage && playing);
     now_playing = playing;
     if (!enabled || !g_stage || !g_spawn) return;
@@ -1886,9 +1939,11 @@ int coop_player_positions(float (*pos)[2], int max)
     return n >= 2 ? n : 0;
 }
 
-// Switching co-op on or off (the options screen's checkbox, scene.c) takes effect when the
-// next level starts (the spawn hook), never in the middle of one. The hooks stay installed
-// either way and do nothing while co-op is off; only the Space-pauses check is swapped.
+// Switching co-op on (the options screen's checkbox, scene.c) takes effect when the next
+// level starts (the spawn hook): the other players' fish are made then. Switching it off
+// takes the other fish out at once (in the next frame, take_out_players), and so does online
+// play for the guests' fish. The hooks stay installed either way and do nothing while co-op
+// is off; only the Space-pauses check is swapped.
 static int requested;
 static int (*patch_u32_fn)(DWORD, DWORD, DWORD);
 
@@ -1910,7 +1965,14 @@ void coop_request(int on)
 {
     requested = on != 0;
     ini_write("coop", requested ? "1" : "0");
-    log_printf("co-op %s from the next level", requested ? "on" : "off");
+    if (!requested && enabled) take_out_pending |= TAKE_OUT_ALL;
+    if (requested) take_out_pending &= ~TAKE_OUT_ALL; // on again before it happened
+    log_printf(requested ? "co-op on from the next level" : "co-op off");
+}
+
+void coop_online_closed(void)
+{
+    take_out_pending |= TAKE_OUT_GUESTS;
 }
 
 // --- Whose score is whose ---------------------------------------------------------------

@@ -14,8 +14,8 @@ Co-op (switch it on in the game's Options): player 1 uses the mouse. Everyone el
 during a level by pressing a button on their own device: a gamepad, a keyboard's W A S D
 keys, its arrow keys, or another mouse (up to 4 players on this PC).
 
-Online (set online=1 in ff2wide.ini): up to 9 friends join from their own PCs. Send them
-ff2guest.exe from this folder; ff2wide.log shows the address they type in.
+Online (tick Online in the game's Options): up to 9 friends join from their own PCs. Send
+them ff2guest.exe from this folder; the Options screen shows the address they type in.
 
 This is a fan-made mod, not affiliated with PopCap Games or Electronic Arts.
 It contains cnc-ddraw (MIT License, Copyright (c) 2025 github.com/FunkyFr3sh) and the

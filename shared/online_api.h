@@ -30,3 +30,7 @@ typedef int (*OnlineWantsFrame_t)(void);                    // a frame is due to
 typedef void (*OnlineVideo_t)(const BYTE *bgra, int pitch, const int marks[ONLINE_MAX_GUESTS][2]);
 // Each guest's latest input (out[ONLINE_MAX_GUESTS]); a guest keeps its place while it's gone.
 typedef void (*OnlineGetInput_t)(OnlineInput *out);
+// Switched off: every guest is let go and new ones turned away; on again: taking guests.
+typedef void (*OnlineSetOpen_t)(int on);
+// What friends type in to connect (the internet address once known, else this PC's).
+typedef void (*OnlineAddress_t)(char *out, int len);

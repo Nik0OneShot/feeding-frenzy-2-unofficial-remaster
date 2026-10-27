@@ -325,6 +325,7 @@ static DWORD WINAPI recv_thread(void *arg)
         case PKT_REJECT:
             if (n >= (int)sizeof(PktReject) && !welcomed) {
                 const char *why = buf[1] == REJECT_VERSION ? "the host has a different FF2 Remaster version"
+                                                           : buf[1] == REJECT_CLOSED ? "the host has online play switched off"
                                                            : "the host's game is full";
                 set_status(why);
             }

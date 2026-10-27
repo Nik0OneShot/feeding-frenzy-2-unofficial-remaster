@@ -15,11 +15,13 @@
 // - resource/shell/options.xml: the Co-op checkbox and players 2 to 4's color buttons.
 // - resource/themes/basetheme.xml: per-player sounds may play once per player at a time.
 // - resource/stages/stagescreendata.xml: stage 16's intro points at a text layout that exists.
+// - resource/stages/stage*.xml: a golden minnow comes in every level, and now and then another.
 // - loose splash/splashScreen.xml: names the splash background "splashBg" so the patch can
 //   scale it to cover the screen (scene.c).
 #define COBJMACROS
 #include <windows.h>
 #include <wincodec.h>
+#include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -250,6 +252,13 @@ static int put_hud_extension(Saf *saf, const char *name, const char *jpg, const 
     return 1;
 }
 
+#define GOLDEN_SPAWN(delay)                                                                                             \
+    "\t<spawn class=\"GoldenFish\" visual=\"minnowBrown\" size=\"0.9\" foodValue=\"200\" location=\"side\""            \
+    " showMenu=\"false\" showStageComplete=\"false\" behavior=\"GoldenFish\" supply=\"1\">\n"                            \
+    "\t\t<phase max=\"1\" delay=\"" delay "\" />\n\t\t<phase max=\"1\" delay=\"" delay "\" />\n"                         \
+    "\t\t<phase max=\"1\" delay=\"" delay "\" />\n\t</spawn>\n"
+static const char GOLDEN_SPAWNS[] = GOLDEN_SPAWN("(6.0,25.0)") GOLDEN_SPAWN("(180.0,420.0)");
+
 int mods_apply(Saf *saf, const BYTE *splash, DWORD splash_len, BYTE **splash_out, DWORD *splash_out_len,
                char *err, int err_len)
 {
@@ -330,15 +339,28 @@ int mods_apply(Saf *saf, const BYTE *splash, DWORD splash_len, BYTE **splash_out
                       n, 136 * (n - 3), n, n);
     snprintf(buf + o, sizeof buf - o, "\t\t\t\t</group>\n\n\t\t\t</group> <!-- button group -->");
     if (!replace_once(&options, "</group> <!-- button group -->", buf, "options.xml") ||
+        // Co-op and Online side by side, and under them at the bottom right (mirroring the
+        // version number at the bottom left) the address friends type in, while hosting.
         !replace_once(&options, "</group> <!-- button group -->",
-                      "<group name=\"coopOptionGrp\" y=\"70\" x=\"-40\" >\n"
+                      "<group name=\"coopOptionGrp\" y=\"70\" x=\"-90\" >\n"
                       "\t\t\t\t\t<text name=\"coopTitleText\" x=\"0\" y=\"1\" string=\"Co-op:\" xAlign=\"right\""
                       " yAlign=\"middle\" font=\"textFontMed\" />\n"
                       "\t\t\t\t\t<checkBox pivot=\"center\" name=\"coopOptionCheck\" action=\"toggleCoop\""
                       " uncheckedImg=\"checkBtn_normal\" uncheckedOverImg=\"checkBtn_high\""
                       " checkedImg=\"checkBtnChecked_normal\" checkedOverImg=\"checkBtnChecked_high\""
                       " x=\"24\" y=\"0\" />\n"
-                      "\t\t\t\t</group>\n\n\t\t\t</group> <!-- button group -->",
+                      "\t\t\t\t</group>\n"
+                      "\t\t\t\t<group name=\"onlineOptionGrp\" y=\"70\" x=\"110\" >\n"
+                      "\t\t\t\t\t<text name=\"onlineTitleText\" x=\"0\" y=\"1\" string=\"Online:\" xAlign=\"right\""
+                      " yAlign=\"middle\" font=\"textFontMed\" />\n"
+                      "\t\t\t\t\t<checkBox pivot=\"center\" name=\"onlineOptionCheck\" action=\"toggleOnline\""
+                      " uncheckedImg=\"checkBtn_normal\" uncheckedOverImg=\"checkBtn_high\""
+                      " checkedImg=\"checkBtnChecked_normal\" checkedOverImg=\"checkBtnChecked_high\""
+                      " x=\"24\" y=\"0\" />\n"
+                      "\t\t\t\t</group>\n"
+                      "\t\t\t\t<text name=\"onlineAddressText\" x=\"230\" y=\"150\" string=\"\" xAlign=\"right\""
+                      " yAlign=\"top\" font=\"textFontSmall\" />\n"
+                      "\n\t\t\t</group> <!-- button group -->",
                       "options.xml"))
         return 0;
     put_text(saf, "resource/shell/options.xml", &options);
@@ -365,6 +387,45 @@ int mods_apply(Saf *saf, const BYTE *splash, DWORD splash_len, BYTE **splash_out
                       "textLayout=\"resource/stages/text/1chm2rhLayout.xml\"", "stagescreendata.xml"))
         return 0;
     put_text(saf, "resource/stages/stagescreendata.xml", &screens);
+
+    // Golden minnows: one comes in every level (not the bonus rounds) at a random time in its
+    // first half minute or so, and now and then another in a long level. Two spawners do it:
+    // the sure one (supply 1: one in all) and a rare one, whose long timer few levels outlast.
+    // A spawner's timer runs on through the growth phases (FishSpawn 0x43a180). The few
+    // levels that had a golden minnow lose theirs.
+    for (int i = 0; i < saf->count; i++) {
+        const char *name = saf->entries[i].name, *digits = name + strlen("resource/stages/stage");
+        if (strncmp(name, "resource/stages/stage", strlen("resource/stages/stage")) || !isdigit((BYTE)*digits)) continue;
+        while (isdigit((BYTE)*digits)) digits++;
+        if (strcmp(digits, ".xml")) continue;
+        Text stage = entry_text(saf, name);
+        // each "\n<spaces><spawn class="GoldenFish" ... </spawn>" out
+        for (char *at = stage.p; (at = strstr(at, "<spawn class=\"GoldenFish\""));) {
+            char *from = at, *end = strstr(at, "</spawn>");
+            while (from > stage.p && (from[-1] == ' ' || from[-1] == '\t')) from--;
+            if (from == stage.p || from[-1] != '\n' || !end) {
+                at++;
+                continue;
+            }
+            from--;
+            end += strlen("</spawn>");
+            memmove(from, end, stage.len - (end - stage.p) + 1);
+            stage.len -= end - from;
+            at = from;
+        }
+        char *close = NULL;
+        for (char *c = stage.p; (c = strstr(c, "</stage>")); c++) close = c;
+        if (!close) return fail("%s has no </stage>", name);
+        size_t head = close - stage.p, add = strlen(GOLDEN_SPAWNS);
+        char *out = malloc(stage.len + add + 1);
+        memcpy(out, stage.p, head);
+        memcpy(out + head, GOLDEN_SPAWNS, add);
+        memcpy(out + head + add, close, stage.len - head + 1);
+        free(stage.p);
+        stage.p = out;
+        stage.len += add;
+        put_text(saf, name, &stage);
+    }
 
     Text splash_text = { malloc(splash_len + 1), splash_len };
     memcpy(splash_text.p, splash, splash_len);

@@ -245,7 +245,10 @@ static DWORD WINAPI upnp_thread(void *arg)
             else if (is_private(ip))
                 host_log("UPnP: router forwards UDP port %d, but its internet address %s is a shared one (CGNAT or a second "
                          "router): guests outside may not get through; a VPN like Tailscale or ZeroTier works", g_port, ip);
-            else host_log("UPnP: router forwards UDP ports %d-%d; guests over the internet connect to %s", g_port, g_port + 1, ip);
+            else {
+                host_log("UPnP: router forwards UDP ports %d-%d; guests over the internet connect to %s", g_port, g_port + 1, ip);
+                host_set_public_address(ip);
+            }
             if (permanent) host_log("UPnP: the router keeps the port open until it's removed in the router's settings");
         }
         if (permanent) return 0;

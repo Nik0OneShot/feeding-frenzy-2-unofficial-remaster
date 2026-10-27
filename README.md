@@ -28,6 +28,11 @@ the installer builds the changed game data on your PC, from your own copy.
   They don't need the game: they see and hear yours, and each steers a fish of their own.
 - **Fixes for co-op.** Clams, jellyfish, ink, poison, bonuses, bosses and night levels all
   work with several fish, along with crashes found on the way.
+- **Gameplay touches.**
+  - A golden minnow comes into every level at least once, swimming in where you can see it.
+    Now and then another one shows up in a long level.
+  - After a perfect stage, your Frenzy chain holds until the mermaid arrives, instead of
+    running out while the fish swim off the wider screen.
 
 ## Installing
 
@@ -48,8 +53,11 @@ game may differ, so it asks before installing on them.
 ## Settings
 
 The settings are in `ff2wide.ini` in the game folder; every setting is explained in the file.
-Co-op can also be switched on in the game's **Options** screen, which also has colour buttons
-for players 2 to 4.
+The game's **Options** screen also has:
+- **Co-op:** on from the next level; switched off, the other fish leave straight away.
+- **Online:** hosting starts or stops straight away, and the screen shows the address
+  friends type in.
+- **Colour buttons** for players 2 to 4.
 
 | Setting | What it does |
 | --- | --- |
@@ -76,8 +84,8 @@ pause the game; P and Esc still do.
 
 ## Playing online
 
-1. Set `online=1` in `ff2wide.ini` and start the game. `ff2wide.log` shows the address
-   friends connect to.
+1. Tick **Online** in the game's Options screen (or set `online=1` in `ff2wide.ini`). The
+   Options screen shows the address friends connect to.
 2. Send your friends `ff2guest.exe` from the game folder. They run it and type in your
    address.
 3. Each friend becomes the next player when they connect.

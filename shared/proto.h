@@ -32,7 +32,7 @@ enum {
     PKT_VIDEO, PKT_AUDIO,
 };
 
-enum { REJECT_BUSY = 1, REJECT_VERSION };
+enum { REJECT_BUSY = 1, REJECT_VERSION, REJECT_CLOSED };
 
 #define NET_DASH    1
 #define NET_SPECIAL 2

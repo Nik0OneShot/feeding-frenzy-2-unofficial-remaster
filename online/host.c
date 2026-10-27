@@ -10,6 +10,7 @@
 #include <ws2tcpip.h>
 #include <mstcpip.h>
 #include <windows.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "../shared/h264.h"
@@ -35,6 +36,8 @@ typedef struct {
 } Guest;
 static Guest guests[ONLINE_MAX_GUESTS];
 static int connected_count;
+static int open = 1;                 // taking guests (online_set_open)
+static char public_address[64];      // the router's internet address, once UPnP has it
 
 static int enc_w, enc_h;
 static BYTE *frame_bgra;            // the latest frame, handed from the game thread
@@ -165,12 +168,12 @@ static void handle(const BYTE *buf, int n, const struct sockaddr_in *from, int s
     case PKT_HELLO: {
         const PktHello *h = (const PktHello *)buf;
         if (side || n < 8 || h->magic != NET_MAGIC) break;
-        Guest *g = h->version == NET_VERSION && n >= (int)sizeof *h ? place_for(h, from) : NULL;
+        Guest *g = open && h->version == NET_VERSION && n >= (int)sizeof *h ? place_for(h, from) : NULL;
         if (!g) {
-            PktReject r = { PKT_REJECT, h->version != NET_VERSION ? REJECT_VERSION : REJECT_BUSY };
+            PktReject r = { PKT_REJECT, h->version != NET_VERSION ? REJECT_VERSION : !open ? REJECT_CLOSED : REJECT_BUSY };
             LeaveCriticalSection(&cs);
             if (h->version != NET_VERSION) log_ignored(buf, from, "the guest's viewer is a different version");
-            else log_ignored(buf, from, "all the places are taken");
+            else log_ignored(buf, from, open ? "all the places are taken" : "online play is switched off");
             host_send(from, &r, sizeof r);
             return;
         }
@@ -400,6 +403,39 @@ __declspec(dllexport) void online_video(const BYTE *bgra, int pitch, const int m
         memcpy(frame_bgra + (size_t)y * cfg.width * 4, bgra + (size_t)y * pitch, (size_t)cfg.width * 4);
     InterlockedExchange(&frame_busy, 1);
     SetEvent(frame_event);
+}
+
+// Online play switched off in the game (and on again): off, every guest is let go and new
+// ones are told so (REJECT_CLOSED); the ports stay bound, for switching it on again.
+__declspec(dllexport) void online_set_open(int on)
+{
+    EnterCriticalSection(&cs);
+    if (open != !!on) host_log(on ? "taking guests again" : "online play switched off: guests let go");
+    open = !!on;
+    for (int i = 0; !open && i < ONLINE_MAX_GUESTS; i++)
+        if (guests[i].connected) disconnect(&guests[i], "was let go");
+    LeaveCriticalSection(&cs);
+}
+
+void host_set_public_address(const char *ip)
+{
+    EnterCriticalSection(&cs);
+    lstrcpynA(public_address, ip, sizeof public_address);
+    LeaveCriticalSection(&cs);
+}
+
+// What friends type in: the router's internet address once UPnP has it, else this PC's on
+// its own network; with the port when it isn't the usual one.
+__declspec(dllexport) void online_address(char *out, int len)
+{
+    char ip[64] = "";
+    struct in_addr me;
+    EnterCriticalSection(&cs);
+    lstrcpynA(ip, public_address, sizeof ip);
+    LeaveCriticalSection(&cs);
+    if (!*ip && host_main_address(&me)) inet_ntop(AF_INET, &me, ip, sizeof ip);
+    if (cfg.port == NET_PORT) snprintf(out, len, "%s", ip);
+    else snprintf(out, len, "%s:%d", ip, cfg.port);
 }
 
 __declspec(dllexport) void online_get_input(OnlineInput *out)

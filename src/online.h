@@ -4,8 +4,14 @@
 
 // Online co-op host: with on, loads ff2online.dll and starts hosting.
 void online_init(int on, int port, int kbps, int fps, int width, int height, int upnp);
-// Hosting is on (ff2online.dll loaded and started).
+// Hosting is on (ff2online.dll loaded and started, and online play switched on).
 int online_hosting(void);
+// The Options screen's Online checkbox: the setting (saved to ff2wide.ini), applied at once:
+// on starts hosting, off lets every guest go (and their fish, coop.c).
+int online_requested(void);
+void online_request(int on);
+// What the Options screen shows under it: the address friends type in, or "" when off.
+void online_address_text(char *out, int len);
 // Each frame, before it's presented: hands the frame over when one is due to be sent, with
 // where each guest's "You!" label goes (x ONLINE_NO_MARK: nowhere), and takes the guests'
 // latest input.

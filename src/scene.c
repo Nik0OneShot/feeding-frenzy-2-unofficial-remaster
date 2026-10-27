@@ -10,6 +10,7 @@
 #include "log.h"
 #include "scene.h"
 #include "coop.h"
+#include "online.h"
 
 // Widgets (engine::Interface).
 #define WIDGET_NAME       0x10   // std::string (MSVC 2005: buffer/pointer at +4, size +0x14, capacity +0x18)
@@ -237,6 +238,22 @@ void scene_before_draw(BYTE *engine)
         if (on != coop_requested()) coop_request(on);
     }
     coop_check = check;
+    // The same for the Online checkbox beside it, and the address friends type in below.
+    static BYTE *online_check;
+    check = find(root, "onlineOptionCheck", 0);
+    if (check && check != online_check) {
+        ((SetChecked_t)(*(void ***)check)[0x164 / 4])(check, online_requested());
+    } else if (check) {
+        int on = ((IsChecked_t)(*(void ***)check)[0x160 / 4])(check) != 0;
+        if (on != online_requested()) online_request(on);
+    }
+    online_check = check;
+    BYTE *address = find(root, "onlineAddressText", 0);
+    if (address) {
+        char text[96];
+        online_address_text(text, sizeof text);
+        coop_set_text(address, text);
+    }
     // and the players' color buttons below it show their colors (coop.c cycles them)
     char name[24];
     for (int i = 2; i <= MAX_PLAYERS; i++) {

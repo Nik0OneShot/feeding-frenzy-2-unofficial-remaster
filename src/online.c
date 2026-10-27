@@ -1,7 +1,9 @@
 // Online co-op host: connects the game to ff2online.dll (patch/online), which streams the
 // game to guests' ff2guest.exe and brings each guest's input back as a player's (coop.c).
-// The DLL is loaded only with online=1 in ff2wide.ini.
+// The DLL is loaded only once online play is on (online=1 in ff2wide.ini, or the Options
+// screen's Online checkbox); switched off again, it lets its guests go and takes no more.
 #include <windows.h>
+#include <stdio.h>
 #include "../shared/label.h"
 #include "../shared/online_api.h"
 #include "ambient.h"
@@ -12,13 +14,18 @@
 static OnlineWantsFrame_t wants_frame;
 static OnlineVideo_t video;
 static OnlineGetInput_t get_input;
+static OnlineSetOpen_t set_open;
+static OnlineAddress_t get_address;
 static OnlineInput latest[ONLINE_MAX_GUESTS];
 static int was_connected[ONLINE_MAX_GUESTS], last_mouse[ONLINE_MAX_GUESTS][2], mouse_moved[ONLINE_MAX_GUESTS][2];
 static int frame_width, frame_height;
+static OnlineConfig config;
+static int requested, started, tried;
 
-void online_init(int on, int port, int kbps, int fps, int width, int height, int upnp)
+// Loads ff2online.dll and starts hosting (once; it failing is logged, and not tried again).
+static void start_hosting(void)
 {
-    if (!on) return;
+    if (tried++) return;
     char path[MAX_PATH], *slash = path;
     GetModuleFileNameA(NULL, path, MAX_PATH);
     for (char *p = path; *p; p++)
@@ -29,20 +36,61 @@ void online_init(int on, int port, int kbps, int fps, int width, int height, int
     wants_frame = dll ? (OnlineWantsFrame_t)(void *)GetProcAddress(dll, "online_wants_frame") : NULL;
     video = dll ? (OnlineVideo_t)(void *)GetProcAddress(dll, "online_video") : NULL;
     get_input = dll ? (OnlineGetInput_t)(void *)GetProcAddress(dll, "online_get_input") : NULL;
-    if (!start || !wants_frame || !video || !get_input) {
-        log_printf("online: ff2online.dll is missing next to the game (error %lu)", GetLastError());
+    set_open = dll ? (OnlineSetOpen_t)(void *)GetProcAddress(dll, "online_set_open") : NULL;
+    get_address = dll ? (OnlineAddress_t)(void *)GetProcAddress(dll, "online_address") : NULL;
+    if (!start || !wants_frame || !video || !get_input || !set_open || !get_address) {
+        log_printf("online: ff2online.dll is missing next to the game, or out of date (error %lu)", GetLastError());
         get_input = NULL;
         return;
     }
+    if (!start(&config)) get_input = NULL;
+    started = get_input != NULL;
+}
+
+void online_init(int on, int port, int kbps, int fps, int width, int height, int upnp)
+{
     frame_width = width;
     frame_height = height;
-    OnlineConfig cfg = { port, kbps, fps, width, height, upnp, 0, log_printf };
-    if (!start(&cfg)) get_input = NULL;
+    config = (OnlineConfig){ port, kbps, fps, width, height, upnp, 0, log_printf };
+    requested = on != 0;
+    if (requested) start_hosting();
 }
 
 int online_hosting(void)
 {
-    return get_input != NULL;
+    return started && requested;
+}
+
+int online_requested(void)
+{
+    return requested;
+}
+
+void online_request(int on)
+{
+    char path[MAX_PATH], *slash = path;
+    if (requested == (on != 0)) return;
+    requested = on != 0;
+    GetModuleFileNameA(NULL, path, MAX_PATH);
+    for (char *p = path; *p; p++)
+        if (*p == '\\') slash = p + 1;
+    lstrcpyA(slash, "ff2wide.ini");
+    WritePrivateProfileStringA("ff2wide", "online", requested ? "1" : "0", path);
+    log_printf("online play %s", requested ? "on" : "off");
+    if (requested && !started) start_hosting();
+    else if (started) set_open(requested);
+    if (!requested) coop_online_closed();
+}
+
+void online_address_text(char *out, int len)
+{
+    char address[96];
+    if (!online_hosting()) {
+        snprintf(out, len, "%s", requested && tried ? "Online play couldn't start (see ff2wide.log)" : "");
+        return;
+    }
+    get_address(address, sizeof address);
+    snprintf(out, len, "Address: %s", address);
 }
 
 void online_frame(void **back_surface, const int marks[ONLINE_MAX_GUESTS][2])

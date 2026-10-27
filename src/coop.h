@@ -20,10 +20,12 @@ int coop_respawn_framing(void);
 int coop_label_spot(int which, float *spot);
 // An online guest's player number (guest 0 ..; 0: none).
 int coop_guest_player(int guest);
-// The options screen's Co-op checkbox: the setting (saved to ff2wide.ini), applied when the
-// next level starts.
+// The options screen's Co-op checkbox: the setting (saved to ff2wide.ini). On takes effect
+// when the next level starts; off at once, taking the other fish out.
 int coop_requested(void);
 void coop_request(int on);
+// Online play was switched off: the guests' fish are taken out (in the next frame).
+void coop_online_closed(void);
 // The Options screen's color buttons show these (player 2 .. MAX_PLAYERS; cycled by the
 // buttons).
 const char *coop_color_name(int player);
