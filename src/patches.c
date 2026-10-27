@@ -703,17 +703,19 @@ static void scale_clams(BYTE *layer, float s)
     }
 }
 
-static void place_slots(BYTE *layer, const float *at, float s, const float *camera)
+// s: the layer's scale across and down (they differ for a mixed layer with a surface).
+static void place_slots(BYTE *layer, const float *at, const float *s, const float *camera)
 {
-    if (s <= 0) return;
+    if (s[0] <= 0 || s[1] <= 0) return;
     BYTE **child = *(BYTE ***)(layer + CONTAINER_CHILDREN_BEGIN), **end = *(BYTE ***)(layer + CONTAINER_CHILDREN_END);
     for (; child && child < end; child++) {
         BYTE *c = *child;
         if (!c || *(DWORD *)c != VTBL_CONTAINER_SLOT) continue;
         float *pos = (float *)(c + WIDGET_POS), *scale = (float *)(c + WIDGET_SCALE_X);
-        pos[0] = (-camera[0] - at[0]) / s;
-        pos[1] = (-camera[1] - at[1]) / s;
-        scale[0] = scale[1] = 1 / s;
+        pos[0] = (-camera[0] - at[0]) / s[0];
+        pos[1] = (-camera[1] - at[1]) / s[1];
+        scale[0] = 1 / s[0];
+        scale[1] = 1 / s[1];
     }
     if (!g_stage) return;
     BYTE **entry = *(BYTE ***)(g_stage + STAGE_CLAMS), **entries_end = *(BYTE ***)(g_stage + STAGE_CLAMS + 4);
@@ -721,7 +723,7 @@ static void place_slots(BYTE *layer, const float *at, float s, const float *came
         BYTE *a = clam_on(*entry, layer);
         if (!a || clam_was_moved(a)) continue;
         float *c = (float *)(a + ACTOR_POS);
-        clam_moved(a, at[0] + camera[0] + s * c[0], at[1] + camera[1] + s * c[1]);
+        clam_moved(a, at[0] + camera[0] + s[0] * c[0], at[1] + camera[1] + s[1] * c[1]);
     }
 }
 
@@ -779,7 +781,7 @@ void __thiscall layout_pan_apply_hook(BYTE *pan, float *camera)
         ((LayoutPanApply_t)FN_LAYOUTPAN_APPLY)(pan, camera);
         return;
     }
-    float pos[2], s = 1;
+    float pos[2], s = 1, s_down = 0; // s_down: a different scale down than across, if not 0
     // A mixed layer as wide as the view (the shipwreck's) needs no scaling to cover it, only
     // for the strip behind the HUD, and scaled it pushed its clams outward, one out of the
     // level. So it moves exactly with the play layer, as in the original; the strip shows the
@@ -805,24 +807,38 @@ void __thiscall layout_pan_apply_hook(BYTE *pan, float *camera)
         ty = ty < 0 ? 0 : ty > 1 ? 1 : ty;
         pos[0] = -(p->w * s - need_w) / 2 - tx * travel_x;
         pos[1] = -p->above - (p->h * s - need_h) / 2 - ty * travel_y;
-        // A layer as tall as the level moved up and down exactly with the play layer in the
-        // original, so its water surface (pier, reef) sat on the level's water line, which
-        // fish leap out of and butterflies stay above. Scaled, it's lined up there instead
-        // (the line w is drawn at P + w for the play layer at P = -camera): it then reaches
-        // w (s - 1) less far up, a strip the HUD covers.
-        if (p->water > 0) pos[1] = -camera[1] + p->water * (1 - s);
-        // A mixed layer without a surface (the reef's rocks) sits on the level's floor
-        // instead: scaled up to cover the width, its art grows taller than the level, and
-        // centered, its bottom (with the clams on its rocks) went below the level's bottom
-        // edge, off screen. Its bottom is lined up with the level's (the line h, drawn at
-        // P + h for the play layer at P); the extra height goes up, behind the HUD.
-        else if (p->mixed) pos[1] = -camera[1] + p->h * (1 - s);
+        if (p->mixed && p->water > 0) {
+            // A mixed layer with a surface holds the clams on its floor too: lined up at the
+            // surface and scaled, its floor went below the level's (Wrasse Reef's clams sat on
+            // the bottom edge, cut off). It needs both lines where they were, so it's only
+            // stretched across to cover the width, and up and down it moves exactly with the
+            // play layer, as in the original; the strip behind the HUD shows the layers behind.
+            s = need_w / p->w > 1 ? need_w / p->w : 1;
+            s_down = 1;
+            pos[0] = -(p->w * s - need_w) / 2 - tx * travel_x;
+            pos[1] = -camera[1];
+        } else if (p->water > 0) {
+            // A layer as tall as the level moved up and down exactly with the play layer in
+            // the original, so its water surface (pier, reef) sat on the level's water line,
+            // which fish leap out of and butterflies stay above. Scaled, it's lined up there
+            // instead (the line w is drawn at P + w for the play layer at P = -camera): it
+            // then reaches w (s - 1) less far up, a strip the HUD covers.
+            pos[1] = -camera[1] + p->water * (1 - s);
+        } else if (p->mixed) {
+            // A mixed layer without a surface (the reef's rocks) sits on the level's floor
+            // instead: scaled up to cover the width, its art grows taller than the level,
+            // and centered, its bottom (with the clams on its rocks) went below the level's
+            // bottom edge, off screen. Its bottom is lined up with the level's (the line h,
+            // drawn at P + h for the play layer at P); the extra height goes up, behind the HUD.
+            pos[1] = -camera[1] + p->h * (1 - s);
+        }
     }
-    *(float *)(widget + WIDGET_SCALE_X) = s;
-    *(float *)(widget + WIDGET_SCALE_Y) = s;
+    float scale[2] = { s, s_down ? s_down : s };
+    *(float *)(widget + WIDGET_SCALE_X) = scale[0];
+    *(float *)(widget + WIDGET_SCALE_Y) = scale[1];
     typedef void (__thiscall *SetPosition_t)(BYTE *, float *);
     ((SetPosition_t)(*(void ***)widget)[WIDGET_VTBL_SET_POSITION / 4])(widget, pos);
-    if (p->mixed) place_slots(widget, pos, s, camera);
+    if (p->mixed) place_slots(widget, pos, scale, camera);
     else if (!p->is_play && s != 1) scale_clams(widget, s);
 }
 
@@ -854,8 +870,8 @@ static void mixed_layers_before(void)
             if (s != 1) scale_clams(layer, s); // as at the camera's move, in case that's missed
             continue;
         }
-        float *at = (float *)(layer + WIDGET_POS), s = *(float *)(layer + WIDGET_SCALE_X);
-        if (s <= 0) continue;
+        float *at = (float *)(layer + WIDGET_POS), s[2] = { *(float *)(layer + WIDGET_SCALE_X), *(float *)(layer + WIDGET_SCALE_Y) };
+        if (s[0] <= 0 || s[1] <= 0) continue;
         float camera[2] = { -play[0], -play[1] };
         place_slots(layer, at, s, camera); // as at the camera's move, in case that's missed
         BYTE **child = *(BYTE ***)(layer + CONTAINER_CHILDREN_BEGIN);
@@ -871,10 +887,10 @@ static void mixed_layers_before(void)
             memcpy(m->pos, c + WIDGET_POS, sizeof m->pos);
             memcpy(m->scale, c + WIDGET_SCALE_X, sizeof m->scale);
             float *pos = (float *)(c + WIDGET_POS), *scale = (float *)(c + WIDGET_SCALE_X);
-            pos[0] = (play[0] + m->pos[0] - at[0]) / s;
-            pos[1] = (play[1] + m->pos[1] - at[1]) / s;
-            scale[0] /= s;
-            scale[1] /= s;
+            pos[0] = (play[0] + m->pos[0] - at[0]) / s[0];
+            pos[1] = (play[1] + m->pos[1] - at[1]) / s[1];
+            scale[0] /= s[0];
+            scale[1] /= s[1];
         }
     }
 }
