@@ -96,6 +96,7 @@ static int keeper;                       // the player whose fish the spawner ho
 enum { MODE_TOGETHER, MODE_HUNGER, MODE_COUNT };
 static int mode, mode_requested;
 static int requested;                    // co-op switched on (the Options button, coop_request)
+static int now_playing;                  // play is on (not menus, panels, between stages)
 static int winner = -1;
 
 static int competitive(void)
@@ -1279,20 +1280,37 @@ static void meter_bar(BYTE *ctx, float *state, const float *at, float y, float w
     ((FillRect_t)(*(void ***)ctx)[VTBL_CTX_FILL_RECT / 4])(ctx, w, h);
 }
 
+// The growth bar itself shows player 1's own growth, though the game's counter it's set from
+// holds the furthest along (so everyone grows together): only player 1's meals move it, and
+// the thin bars are everyone else's. The meter's value (+0x9c, and its filled width +0xa8, as
+// SetValue 0x45efd0 sets them) is swapped for the draw.
+#define FN_METER_SET_VALUE     0x45efd0  // thiscall(meter, float value)
+#define METER_VALUE            0x9c
+#define METER_FILLED           0xa8
+typedef void (__thiscall *SetValue_t)(BYTE *meter, float value);
+
 void __thiscall coop_grow_meter_draw(BYTE *meter, BYTE *ctx)
 {
-    ((Draw_t)FN_GROW_METER_DRAW)(meter, ctx);
     BYTE *hud = enabled && g_stage && team() ? *(BYTE **)(g_stage + STAGE_HUD) : NULL;
+    int growth_bar = hud && meter == *(BYTE **)(hud + HUD_GROW_METER);
+    if (growth_bar && growth_counter() && pl[0].growth >= 0) {
+        float value = *(float *)(meter + METER_VALUE), filled = *(float *)(meter + METER_FILLED);
+        ((SetValue_t)FN_METER_SET_VALUE)(meter, (float)pl[0].growth);
+        ((Draw_t)FN_GROW_METER_DRAW)(meter, ctx);
+        *(float *)(meter + METER_VALUE) = value;
+        *(float *)(meter + METER_FILLED) = filled;
+    } else {
+        ((Draw_t)FN_GROW_METER_DRAW)(meter, ctx);
+    }
     float *state = draw_state(ctx);
     float total = *(float *)(meter + METER_TOTAL);
     if (!hud || !state || total <= 0) return;
-    int growth_bar = meter == *(BYTE **)(hud + HUD_GROW_METER);
     if (!growth_bar && meter != *(BYTE **)(hud + HUD_SPECIAL_METER)) return;
     if (growth_bar && !growth_counter()) return;
     float values[MAX_PLAYERS];
     int who[MAX_PLAYERS], n = 0;
     for (int i = 0; i < MAX_PLAYERS; i++) {
-        if (i == keeper) continue;
+        if (growth_bar ? i == 0 : i == keeper) continue; // the bar itself shows that one
         if (growth_bar ? !present(i) || pl[i].growth < 0 : !swimming(i)) continue;
         values[n] = growth_bar ? (float)pl[i].growth : *(float *)(pl[i].fish + PLAYER_ABILITY_CHARGE);
         who[n++] = i;
@@ -1633,23 +1651,59 @@ static void announce_winner(int i)
     log_printf("%s: player %d wins", mode_names[mode], i + 1);
 }
 
-void coop_draw_banner(void **back_surface, int width, int height)
+// A player's color as 0..255 RGB: player 1 in its score's gold, the others in their tints.
+static void player_rgb(int i, int *rgb)
 {
-    if (winner < 0 || banner_timer <= 0 || !back_surface) return;
-    if (banner_for != winner) {
+    static const int gold[3] = { 255, 230, 131 };
+    for (int c = 0; c < 3; c++) rgb[c] = i == 0 ? gold[c] : (int)(pl[i].tint[c] * 255);
+}
+
+// A player out of lives waits for the next level or an extra life: "Player 2 is waiting on
+// lives..." in their color under the HUD while they do, so it's clear why their fish isn't
+// coming back.
+#define WAITING_TEXT_PX        22
+#define WAITING_TOP            150       // the first line's bottom, back-buffer pixels
+#define WAITING_LINE           28
+static Label waiting_label[MAX_PLAYERS];
+static int waiting_rgb[MAX_PLAYERS][3];
+
+static int waiting_on_lives(int i)
+{
+    return enabled && g_stage && now_playing && team() && present(i) && pl[i].out && i != keeper &&
+           pl[i].lives <= 0 && !unlimited_lives(g_stage);
+}
+
+void coop_draw_overlays(void **back_surface, int width, int height)
+{
+    int show_banner = winner >= 0 && banner_timer > 0, waiting = 0;
+    for (int i = 0; i < MAX_PLAYERS; i++) waiting += waiting_on_lives(i);
+    if ((!show_banner && !waiting) || !back_surface) return;
+    if (show_banner && banner_for != winner) {
         char text[32];
-        // player 1 in its score's gold, the others in their tints
-        int r = 255, g = 230, b = 131;
-        if (winner > 0) r = (int)(pl[winner].tint[0] * 255), g = (int)(pl[winner].tint[1] * 255), b = (int)(pl[winner].tint[2] * 255);
+        int rgb[3];
+        player_rgb(winner, rgb);
         free(banner.bgra);
         sprintf(text, "Player %d wins!", winner + 1);
-        label_make_text(&banner, text, BANNER_TEXT_PX, r, g, b);
+        label_make_text(&banner, text, BANNER_TEXT_PX, rgb[0], rgb[1], rgb[2]);
         banner_for = winner;
     }
     int pitch;
     BYTE *bits = ambient_lock(back_surface, &pitch);
     if (!bits) return;
-    label_blit(&banner, bits, pitch, width, height, width / 2, height * 2 / 5 + banner.h / 2);
+    for (int i = 0, line = 0; i < MAX_PLAYERS; i++) {
+        if (!waiting_on_lives(i)) continue;
+        int rgb[3];
+        player_rgb(i, rgb);
+        if (!waiting_label[i].bgra || memcmp(rgb, waiting_rgb[i], sizeof rgb)) {
+            char text[48];
+            free(waiting_label[i].bgra);
+            sprintf(text, "Player %d is waiting on lives...", i + 1);
+            label_make_text(&waiting_label[i], text, WAITING_TEXT_PX, rgb[0], rgb[1], rgb[2]);
+            memcpy(waiting_rgb[i], rgb, sizeof rgb);
+        }
+        label_blit(&waiting_label[i], bits, pitch, width, height, width / 2, WAITING_TOP + WAITING_LINE * line++);
+    }
+    if (show_banner) label_blit(&banner, bits, pitch, width, height, width / 2, height * 2 / 5 + banner.h / 2);
     ambient_unlock(back_surface);
 }
 
@@ -1911,8 +1965,7 @@ static void steer_player(int i, float dt)
     p->special_down = special;
 }
 
-// Play is on (not menus, panels, between stages): the "You!" labels show only then.
-static int now_playing;
+// Play is on (not menus, panels, between stages; now_playing): the "You!" labels show only then.
 
 // Just above a fish, in the play layer's coordinates. which: the player's number (1 = player
 // 1, this PC's). The fish grows with its level, so the label sits higher.

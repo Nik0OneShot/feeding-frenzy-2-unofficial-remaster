@@ -313,7 +313,7 @@ void __thiscall display_present_hook(BYTE *display, void *app)
         you_label_spot(1, spot, &ok);
         if (ok) online_draw_you(back, spot[0], spot[1]);
     }
-    coop_draw_banner(back, g_width, GAME_HEIGHT);
+    coop_draw_overlays(back, g_width, GAME_HEIGHT);
     LONGLONG t = now_ticks();
     ((Present_t)FN_DISPLAY_PRESENT)(display, app);
     present_ticks += now_ticks() - t;

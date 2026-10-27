@@ -30,8 +30,9 @@ void coop_request(int on);
 void coop_online_closed(void);
 // The Options screen's Co-op button shows this: "Off", or the mode co-op plays in.
 const char *coop_mode_name(void);
-// A competitive round's winner, across the frame (back buffer, width x height) for a while.
-void coop_draw_banner(void **back_surface, int width, int height);
+// Into the frame (back buffer, width x height): a competitive round's winner for a while, and
+// which players are waiting on lives.
+void coop_draw_overlays(void **back_surface, int width, int height);
 // The Options screen's color buttons show these (player 2 .. MAX_PLAYERS; cycled by the
 // buttons).
 const char *coop_color_name(int player);
