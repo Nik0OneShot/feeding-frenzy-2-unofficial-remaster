@@ -302,12 +302,29 @@ static void tint_part(BYTE *c, const float *by, int any_mode)
     *mode = COLOR_MODE_MULTIPLY;
 }
 
+// Not every part of a picture is a container: some keep other things (floats) where a
+// container's child list is, and one in a big fish's picture sent the walk off into nowhere.
+// So a child list is only walked if it looks like one (readable, a sensible length), and a
+// child only if it's one of the game's objects (its vtable in the game's code).
+#define MAX_CHILDREN           32
+#define GAME_IMAGE_START       0x401000
+#define GAME_IMAGE_END         0x5b0000
+
+static int game_object(const BYTE *p)
+{
+    return p && !((DWORD)p & 3) && !IsBadReadPtr(p, CHILDREN_END + 4) && *(const DWORD *)p >= GAME_IMAGE_START &&
+           *(const DWORD *)p < GAME_IMAGE_END;
+}
+
 static void tint_parts(BYTE *w, const float *by, int depth)
 {
     BYTE **child = *(BYTE ***)(w + CHILDREN_BEGIN), **end = *(BYTE ***)(w + CHILDREN_END);
-    for (int n = 0; child && child < end && n < 32; child++, n++) {
+    if (!child || end < child || end - child > MAX_CHILDREN || ((DWORD)child & 3) ||
+        IsBadReadPtr(child, (end - child) * sizeof *child))
+        return;
+    for (; child < end; child++) {
         BYTE *c = *child;
-        if (!c) continue;
+        if (!game_object(c)) continue;
         tint_part(c, by, 0);
         if (depth < 4) tint_parts(c, by, depth + 1);
     }
@@ -384,7 +401,7 @@ static void tint_fish(Player *p)
     }
     if (*mode != COLOR_MODE_MULTIPLY) return;
     BYTE *animation = *(BYTE **)(visual + VISUAL_ANIMATION);
-    if (animation) tint_part(animation, color, 1);
+    if (game_object(animation)) tint_part(animation, color, 1);
     tint_parts(visual, color, 0);
 }
 
@@ -675,16 +692,22 @@ static void activate_player(int i)
     Player *p = &pl[i];
     BYTE *held = spawner_fish();
     BYTE done = g_spawn[SPAWN_DONE];
+    // Activate sets the fish up at the spawner's size (the keeper's). In Hunger Strike everyone
+    // has their own: back at it after being eaten, or the smallest when joining.
+    int *level = (int *)(g_spawn + SPAWN_LEVEL), keeper_level = *level;
+    int own = competitive() && mode == MODE_HUNGER && i != keeper ? (p->growth >= 0 ? p->level : 0) : keeper_level;
     creating = 1;
     set_spawner_fish(p->fish);
     g_spawn[SPAWN_DONE] = 0;
+    *level = own;
     ((Activate_t)FN_SPAWN_ACTIVATE)(g_spawn);
+    *level = keeper_level;
     set_spawner_fish(held);
     g_spawn[SPAWN_DONE] = done;
     creating = 0;
     p->entered = 1;
     p->out = 0;
-    p->level = *(int *)(g_spawn + SPAWN_LEVEL);
+    p->level = own;
     p->carry_x = p->carry_y = 0;
     p->dash_down = 1; // a button still held from joining doesn't dash
     p->special_down = 0;
