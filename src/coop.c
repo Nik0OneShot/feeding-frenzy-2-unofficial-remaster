@@ -2153,6 +2153,17 @@ typedef void (__thiscall *SetVelocity_t)(BYTE *actor, float x, float y);
 #define VTBL_ACTOR_GET_POSITION 0x54     // thiscall(actor, float out[2]) -> out
 typedef float *(__thiscall *ActorPos_t)(BYTE *actor, float *out);
 
+// Suction in every level in Lives Attack: a fish may suck (0x472110 asks) when its +0x1a9 is
+// set, which entering a stage copies from the stage's canSuck (stagemanifest.xml; +0x1d0),
+// off in the first levels.
+#define PLAYER_CAN_SUCK        0x1a9
+
+static void suction_allowed(void)
+{
+    for (int i = 0; i < MAX_PLAYERS; i++)
+        if (swimming(i)) pl[i].fish[PLAYER_CAN_SUCK] = 1;
+}
+
 static void hazards_pulled(void)
 {
     BYTE **begin = *(BYTE ***)(g_stage + STAGE_ACTORS_BEGIN), **end = *(BYTE ***)(g_stage + STAGE_ACTORS_END);
@@ -2254,6 +2265,7 @@ void coop_frame(BYTE *engine)
     find_joiners();
     if (lives_attack()) {
         players_bite();
+        suction_allowed();
         hazards_pulled();
     }
 

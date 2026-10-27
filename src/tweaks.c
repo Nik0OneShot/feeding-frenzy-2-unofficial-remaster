@@ -54,13 +54,30 @@ void __thiscall mermaid_state_update_hook(BYTE *state, void *update)
 // flag)) is what spawns; for a golden minnow spawner (behavior "GoldenFish", the std::string
 // at +0x60) it runs only for the set the golden_minnows setting picks.
 // Every level also has Lives Attack's extra hazards (jellyfish, poison minnows, squid), told
-// apart by supply="9999" (+0xac): they spawn only in Lives Attack. The jellyfish's spawner,
-// a NonPlayerSpawn, has the same update (vtable slot 0x558044) and fields.
+// apart by supply="9999" (+0xac): they spawn only in Lives Attack, where they're the only
+// enemies: the level's own (any fish, mines, pelicans, its own hazards) don't come in there;
+// clams, pearls, bonuses, golden minnows and the like still do. A spawner's kind is the
+// ActorClassInfo it was made from (+0x3c, for its class="..."), told apart by vtable. The
+// jellyfish's spawner, a NonPlayerSpawn, has the same update (vtable slot 0x558044) and
+// fields.
 #define ADDR_FISH_SPAWN_UPDATE_SLOT 0x55787c
 #define ADDR_NONPLAYER_SPAWN_UPDATE_SLOT 0x558044
 #define FN_FISH_SPAWN_UPDATE   0x43a180
 #define SPAWN_SUPPLY           0xac
 #define LIVES_ATTACK_SUPPLY    9999
+#define SPAWN_CLASS            0x3c
+static const DWORD enemy_classes[] = {
+    0x54e1c0, // AIFish
+    0x54e1e0, // PufferFish
+    0x54e200, // Mine
+    0x54e468, // JellyFish
+    0x54e488, // PoisonFish
+    0x54e4c8, // Barracuda
+    0x54e4e8, // AlienFish
+    0x54e528, // CuttleFish
+    0x54e548, // GlowFish
+    0x54e568, // Pelican
+};
 #define SPAWN_BEHAVIOR         0x60      // std::string
 #define SPAWN_POOL_SIZE        0xa8
 #define REMASTER_POOL_SIZE     1
@@ -72,12 +89,21 @@ static const char *std_string(const BYTE *s)
     return *(const DWORD *)(s + 0x18) < 0x10 ? (const char *)(s + 4) : *(const char *const *)(s + 4);
 }
 
+static int spawns_enemies(const BYTE *spawn)
+{
+    const BYTE *info = *(const BYTE *const *)(spawn + SPAWN_CLASS);
+    for (int i = 0; info && i < (int)(sizeof enemy_classes / sizeof *enemy_classes); i++)
+        if (*(const DWORD *)info == enemy_classes[i]) return 1;
+    return 0;
+}
+
 void __thiscall fish_spawn_update_hook(BYTE *spawn, void *update, DWORD flag)
 {
     if (!lstrcmpA(std_string(spawn + SPAWN_BEHAVIOR), "GoldenFish") &&
         (*(int *)(spawn + SPAWN_POOL_SIZE) == REMASTER_POOL_SIZE) != remaster_golden)
         return;
-    if (*(int *)(spawn + SPAWN_SUPPLY) == LIVES_ATTACK_SUPPLY && !coop_lives_attack()) return;
+    int lives_attacks = *(int *)(spawn + SPAWN_SUPPLY) == LIVES_ATTACK_SUPPLY;
+    if (coop_lives_attack() ? !lives_attacks && spawns_enemies(spawn) : lives_attacks) return;
     ((SpawnUpdate_t)FN_FISH_SPAWN_UPDATE)(spawn, update, flag);
 }
 

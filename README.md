@@ -33,8 +33,8 @@ the installer builds the changed game data on your PC, from your own copy.
     one left wins, whatever their size.
   - **Lives Attack:** everyone starts at the biggest size with 10 lives a level, and you eat
     each other mouth first: bite another fish's body to eat it, and head on, the clearly
-    faster one wins. Extra jellyfish, poison minnows and squid come in, and your suction drags
-    them toward you, into the others' way. Run out of lives and you're out; the last one left
+    faster one wins. The only enemies are jellyfish, poison minnows and squid, and your
+    suction (in every level) drags them toward you, into the others' way. Run out of lives and you're out; the last one left
     wins.
 - **Fixes for co-op.** Clams, jellyfish, ink, poison, bonuses, bosses and night levels all
   work with several fish, along with crashes found on the way.
