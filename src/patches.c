@@ -1102,6 +1102,54 @@ static int play_to_screen(const float *p, int *out)
     return 1;
 }
 
+// A particle of such an effect starts where its stream is: the stream's update (0x43ca60)
+// hands the emit (0x4392c0, called at 0x43cc48 with edi = the stream and that spot pushed, x
+// then y) its spot, and the emit keeps it relative to the group, minus the group's absolute
+// position (Widget +0x10, which ignores scale). While zoomed out the spot handed over came
+// out shifted by the zoom, so the puffs (ink clouds most of all, as they last) slid about as
+// the zoom changed while the cloud itself, and what it does to fish, stayed put. A stream in
+// the layer set now hands over its own absolute position, which ignores scale like the
+// group's; one outside it (on an overlay, placed zoomed, layer_to_overlay) has the zoom taken
+// out instead.
+#define ADDR_PARTICLE_EMIT_CALL 0x43cc48
+#define FN_PARTICLE_EMIT        0x4392c0
+#define STREAM_GROUP            0x1ec
+#define WIDGET_PARENT           0xc
+void __cdecl particle_emit_spot(BYTE *stream, float *spot)
+{
+    typedef float *(__thiscall *GetPos_t)(BYTE *, float *);
+    if (!g_play_widget || !g_layer_set_now || *(BYTE **)(stream + STREAM_GROUP) != g_play_widget) return;
+    float z = *(float *)(g_layer_set_now + WIDGET_SCALE_X);
+    if (z == 1 || z <= 0) return;
+    int inside = 0;
+    for (BYTE *w = *(BYTE **)(stream + WIDGET_PARENT); w && !inside; w = *(BYTE **)(w + WIDGET_PARENT))
+        inside = w == g_layer_set_now;
+    if (inside) {
+        float buf[3];
+        float *at = ((GetPos_t)(*(void ***)stream)[WIDGET_VTBL_ABSOLUTE_POS / 4])(stream, buf);
+        spot[0] = at[0];
+        spot[1] = at[1];
+    } else {
+        float *l = (float *)(g_layer_set_now + WIDGET_POS);
+        spot[0] = l[0] + (spot[0] - l[0]) / z;
+        spot[1] = l[1] + (spot[1] - l[1]) / z;
+    }
+}
+
+void particle_emit_thunk(void);
+__asm__(
+    ".globl _particle_emit_thunk\n"
+    "_particle_emit_thunk:\n"
+    "    pushal\n"
+    "    leal 36(%esp), %eax\n"   // the spot: past the registers and the return address
+    "    pushl %eax\n"
+    "    pushl %edi\n"            // the stream
+    "    call _particle_emit_spot\n"
+    "    addl $8, %esp\n"
+    "    popal\n"
+    "    pushl $0x4392c0\n"       // on to the emit, registers as they were
+    "    ret\n");
+
 void layer_to_overlay_thunk(void);
 __asm__(
     ".globl _layer_to_overlay_thunk\n"
@@ -1247,6 +1295,7 @@ void patches_apply(void)
     patch_u32(ADDR_LAYOUTPAN_APPLY_SLOT, FN_LAYOUTPAN_APPLY, (DWORD)layout_pan_apply_hook);
     patch_u32(ADDR_LAYOUTPAN_POS_SLOT, FN_LAYOUTPAN_POS, (DWORD)layout_pan_position_hook);
     patch_u32(ADDR_PARTICLE_APPLY_SLOT, FN_PARTICLE_APPLY, (DWORD)particle_apply_hook);
+    patch_call(ADDR_PARTICLE_EMIT_CALL, FN_PARTICLE_EMIT, particle_emit_thunk);
     patch_u32(ADDR_CLIPPANE_APPLY_SLOT, FN_CLIPPANE_APPLY, (DWORD)clip_pane_apply_transform);
     { // co-op camera: does nothing unless co-op has two or more fish in play
         static const BYTE layer_to_overlay_start[5] = { 0x55, 0x8b, 0xec, 0x8b, 0x01 }; // push ebp; mov ebp,esp; mov eax,[ecx]

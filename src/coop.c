@@ -2155,11 +2155,23 @@ typedef float *(__thiscall *ActorPos_t)(BYTE *actor, float *out);
 
 // Suction in every level in Lives Attack: a fish may suck (0x472110 asks) when its +0x1a9 is
 // set, which entering a stage copies from the stage's canSuck (stagemanifest.xml; +0x1d0),
-// off in the first levels.
+// off in the first levels. The stage's is switched on too, and the HUD told (0x48a910, esi =
+// the HUD, one argument: shows the suction meter and its label, or covers them with a plug).
 #define PLAYER_CAN_SUCK        0x1a9
+#define STAGE_CAN_SUCK         0x1d0
+#define FN_HUD_SET_CAN_SUCK    0x48a910
 
 static void suction_allowed(void)
 {
+    BYTE *hud = *(BYTE **)(g_stage + STAGE_HUD);
+    if (!g_stage[STAGE_CAN_SUCK] && hud) {
+        static const DWORD show = FN_HUD_SET_CAN_SUCK;
+        int on = 1;
+        g_stage[STAGE_CAN_SUCK] = 1;
+        __asm__ volatile("pushl %[on]\n\tcall *%[fn]"
+                         : : "S"(hud), [on] "r"(on), [fn] "m"(show) : "eax", "ecx", "edx", "memory", "cc");
+        log_printf("lives attack: suction allowed in this level");
+    }
     for (int i = 0; i < MAX_PLAYERS; i++)
         if (swimming(i)) pl[i].fish[PLAYER_CAN_SUCK] = 1;
 }
