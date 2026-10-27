@@ -15,7 +15,8 @@
 // - resource/shell/options.xml: the Co-op checkbox and players 2 to 4's color buttons.
 // - resource/themes/basetheme.xml: per-player sounds may play once per player at a time.
 // - resource/stages/stagescreendata.xml: stage 16's intro points at a text layout that exists.
-// - resource/stages/stage*.xml: a golden minnow comes in every level, and now and then another.
+// - resource/stages/stage*.xml: a golden minnow comes in every level, and now and then another;
+//   Lives Attack's extra hazards.
 // - loose splash/splashScreen.xml: names the splash background "splashBg" so the patch can
 //   scale it to cover the screen (scene.c).
 #define COBJMACROS
@@ -258,6 +259,20 @@ static int put_hud_extension(Saf *saf, const char *name, const char *jpg, const 
     "\t\t<phase max=\"1\" delay=\"" delay "\" />\n\t\t<phase max=\"1\" delay=\"" delay "\" />\n"                         \
     "\t\t<phase max=\"1\" delay=\"" delay "\" />\n\t</spawn>\n"
 static const char GOLDEN_SPAWNS[] = GOLDEN_SPAWN("(6.0,25.0)") GOLDEN_SPAWN("(180.0,420.0)");
+// Lives Attack's extra hazards, in every level: marked supply="9999" (a cap no level reaches),
+// they spawn only in Lives Attack (tweaks.c). Everyone's at the last size there, so it's the
+// last phase that counts.
+static const char LIVES_ATTACK_SPAWNS[] =
+    "\t<spawn class=\"JellyFish\" location=\"bottom\" poolSize=\"6\" supply=\"9999\">\n"
+    "\t\t<phase max=\"4\" delay=\"(1.0,4.0)\" />\n\t</spawn>\n"
+    "\t<spawn class=\"PoisonFish\" visual=\"minnowPoison\" size=\"0.7\" rank=\"0\" foodValue=\"0\" location=\"side\""
+    " showMenu=\"false\" showStageComplete=\"false\" behavior=\"Herring\" supply=\"9999\">\n"
+    "\t\t<phase max=\"4\" delay=\"0.5\" />\n\t\t<phase max=\"4\" delay=\"0.5\" />\n"
+    "\t\t<phase max=\"4\" delay=\"0.5\" />\n\t</spawn>\n"
+    "\t<spawn class=\"CuttleFish\" visual=\"cuttleFish\" size=\"0.7\" rank=\"0\" foodValue=\"10\" location=\"side\""
+    " showMenu=\"false\" showStageComplete=\"false\" behavior=\"CuttleFishBehavior\" supply=\"9999\">\n"
+    "\t\t<phase max=\"3\" delay=\"0.5\" />\n\t\t<phase max=\"3\" delay=\"0.5\" />\n"
+    "\t\t<phase max=\"3\" delay=\"0.5\" />\n\t</spawn>\n";
 
 // N for "resource/stages/stageN.xml", else -1.
 static int stage_number(const char *name)
@@ -415,7 +430,8 @@ int mods_apply(Saf *saf, const BYTE *splash, DWORD splash_len, BYTE **splash_out
     // rare one, whose long timer few levels outlast. A spawner's timer runs on through the
     // growth phases (FishSpawn 0x43a180). They're marked poolSize="1" (fish spawners don't
     // use it otherwise): the levels keep their own golden minnow spawners, and the patch runs
-    // either set, as the golden_minnows setting says (tweaks.c).
+    // either set, as the golden_minnows setting says (tweaks.c). Every level also gets Lives
+    // Attack's hazards (LIVES_ATTACK_SPAWNS).
     int first_golden = -1;
     for (int i = 0; i < saf->count; i++) {
         int n = stage_number(saf->entries[i].name);
@@ -426,15 +442,18 @@ int mods_apply(Saf *saf, const BYTE *splash, DWORD splash_len, BYTE **splash_out
     if (first_golden < 0) return fail("%s", "No level has a golden minnow: is this the Steam version of the game?");
     for (int i = 0; i < saf->count; i++) {
         const char *name = saf->entries[i].name;
-        if (stage_number(name) < first_golden) continue;
+        int n = stage_number(name);
+        if (n < 0) continue;
         Text stage = entry_text(saf, name);
         char *close = NULL;
         for (char *c = stage.p; (c = strstr(c, "</stage>")); c++) close = c;
         if (!close) return fail("%s has no </stage>", name);
-        size_t head = close - stage.p, add = strlen(GOLDEN_SPAWNS);
+        const char *golden = n >= first_golden ? GOLDEN_SPAWNS : "";
+        size_t head = close - stage.p, golden_len = strlen(golden), add = golden_len + strlen(LIVES_ATTACK_SPAWNS);
         char *out = malloc(stage.len + add + 1);
         memcpy(out, stage.p, head);
-        memcpy(out + head, GOLDEN_SPAWNS, add);
+        memcpy(out + head, golden, golden_len);
+        memcpy(out + head + golden_len, LIVES_ATTACK_SPAWNS, add - golden_len);
         memcpy(out + head + add, close, stage.len - head + 1);
         free(stage.p);
         stage.p = out;

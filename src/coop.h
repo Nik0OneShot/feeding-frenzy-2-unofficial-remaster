@@ -30,6 +30,8 @@ void coop_request(int on);
 void coop_online_closed(void);
 // The Options screen's Co-op button shows this: "Off", or the mode co-op plays in.
 const char *coop_mode_name(void);
+// This level is played as Lives Attack (its extra hazards come in, tweaks.c).
+int coop_lives_attack(void);
 // Into the frame (back buffer, width x height): a competitive round's winner for a while, and
 // which players are waiting on lives.
 void coop_draw_overlays(void **back_surface, int width, int height);

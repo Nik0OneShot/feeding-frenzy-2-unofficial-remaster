@@ -31,6 +31,11 @@ the installer builds the changed game data on your PC, from your own copy.
   - **Hunger Strike:** everyone races their own growth bar, and the first to fill it wins.
     Everyone gets 3 lives a level and no extra ones; run out and you're out, and the last
     one left wins, whatever their size.
+  - **Lives Attack:** everyone starts at the biggest size with 10 lives a level, and you eat
+    each other mouth first: bite another fish's body to eat it, and head on, the clearly
+    faster one wins. Extra jellyfish, poison minnows and squid come in, and your suction drags
+    them toward you, into the others' way. Run out of lives and you're out; the last one left
+    wins.
 - **Fixes for co-op.** Clams, jellyfish, ink, poison, bonuses, bosses and night levels all
   work with several fish, along with crashes found on the way.
 - **Gameplay touches** (each can be switched off in the settings).
@@ -74,7 +79,7 @@ The game's **Options** screen also has:
 | `golden_minnows` | 1 = a golden minnow in every level from level 13 on; 0 = as the original |
 | `frenzy_waits_for_mermaid` | 1 = after a perfect, the Frenzy chain waits for the mermaid; 0 = as the original |
 | `coop` | 1 = co-op on |
-| `coop_mode` | `together`, or a competitive mode: `hunger` (Hunger Strike) |
+| `coop_mode` | `together`, or a competitive mode: `hunger` (Hunger Strike), `lives` (Lives Attack) |
 | `coop_p2_color` .. `coop_p10_color` | Each player's colour (red,green,blue) |
 | `online` | 1 = host online games for friends |
 | `online_port`, `online_upnp` | The port guests connect to, and whether to ask the router to open it |

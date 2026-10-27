@@ -93,7 +93,7 @@ static int keeper;                       // the player whose fish the spawner ho
 
 // This level's mode (the Options screen's Co-op button, see Modes): playing together, or a
 // competitive one. A competitive round ends when someone wins (winner, a player index).
-enum { MODE_TOGETHER, MODE_HUNGER, MODE_COUNT };
+enum { MODE_TOGETHER, MODE_HUNGER, MODE_LIVES, MODE_COUNT };
 static int mode, mode_requested;
 static int requested;                    // co-op switched on (the Options button, coop_request)
 static int now_playing;                  // play is on (not menus, panels, between stages)
@@ -103,6 +103,21 @@ static int competitive(void)
 {
     return enabled && mode != MODE_TOGETHER;
 }
+
+static int lives_attack(void)
+{
+    return competitive() && mode == MODE_LIVES;
+}
+
+// Lives Attack is on this level (read by coop_suck_thunk; kept up to date by coop_frame).
+int coop_lives_attack_on;
+
+int coop_lives_attack(void)
+{
+    return coop_lives_attack_on;
+}
+
+static int level_count(void);
 
 static int growth_left = -1;             // what we last left in the game's growth counter
 static int last_game_lives = -1000;      // to spot lives the game hands out
@@ -148,6 +163,14 @@ static int in_stage(BYTE *stage, BYTE *player)
 #define FN_HUD_SET_LIVES       0x402550  // stdcall(Hud*, int lives)
 #define RESPAWN_DELAY          2.5f      // seconds, about as long as the game's own death
 #define HUNGER_STRIKE_LIVES    3         // each, at every level's start; no extra ones
+#define LIVES_ATTACK_LIVES     10
+
+// A competitive round's lives, everyone's at every level's start (no extra ones); 0 outside one.
+static int round_lives(void)
+{
+    if (!competitive()) return 0;
+    return mode == MODE_HUNGER ? HUNGER_STRIKE_LIVES : mode == MODE_LIVES ? LIVES_ATTACK_LIVES : 0;
+}
 #define SPAWN_LEVEL            0x90      // int, growth level of the holder's fish
 #define SPAWN_DEATHS           0x94      // int; 0 at the end = "perfect" stage (0x447ef0)
 #define SPAWN_THRESHOLDS       0x6c      // vector begin, end at +0x70; 8 bytes per level
@@ -248,6 +271,10 @@ void __thiscall coop_spawn_hook(BYTE *spawn, int *count)
     keeper = 0;
     g_spawn = spawn;
     g_stage = NULL;
+    // Lives Attack: player 1's fish set up at the last size too (Activate, 0x490830, sizes the
+    // fish from the spawner's level)
+    coop_lives_attack_on = lives_attack();
+    if (lives_attack() && level_count() > 0) *(int *)(spawn + SPAWN_LEVEL) = level_count() - 1;
     for (int i = 0; i < MAX_PLAYERS; i++) {
         pl[i].fish = NULL;
         pl[i].entered = pl[i].out = 0;
@@ -444,7 +471,9 @@ typedef int (__thiscall *Size_t)(BYTE *);
 
 void __thiscall coop_try_eat_hook(BYTE *eater, BYTE *prey)
 {
-    if (prey && (*(DWORD *)prey == VTBL_PLAYER_FISH || *(DWORD *)prey == VTBL_SHIELD_FISH)) return;
+    // (in Lives Attack players eat each other mouth first, players_bite, and may eat each
+    // other's rainbow minnows)
+    if (prey && (*(DWORD *)prey == VTBL_PLAYER_FISH || (*(DWORD *)prey == VTBL_SHIELD_FISH && !lives_attack()))) return;
     ((TryEat_t)FN_PLAYER_TRY_EAT)(eater, prey);
     if (!enabled || !prey || *(DWORD *)prey != VTBL_OYSTER) return;
     BYTE *player = eater - EATER_IFACE, *clam = prey + EATER_IFACE;
@@ -456,7 +485,8 @@ void __thiscall coop_try_eat_hook(BYTE *eater, BYTE *prey)
 
 // The Fury bonus (PlayerFuryState) bypasses TryEat too: it gathers everything on screen that
 // says it can be eaten by the fish (vtable +0xa8, 0x539721) and smaller than it, then dashes
-// through them, eating each one. Players and rainbow minnows now refuse players there.
+// through them, eating each one. Players and rainbow minnows now refuse players there, but in
+// Lives Attack, where players are each other's prey.
 #define ADDR_PLAYER_EDIBLE_SLOT  0x552d4c
 #define FN_PLAYER_EDIBLE         0x446560
 #define ADDR_SHIELD_EDIBLE_SLOT  0x553b6c
@@ -465,19 +495,20 @@ typedef char (__thiscall *Edible_t)(BYTE *self, BYTE *eater);
 
 char __thiscall coop_player_edible_hook(BYTE *self, BYTE *eater)
 {
-    if (eater && *(DWORD *)eater == VTBL_PLAYER_FISH) return 0;
+    if (eater && *(DWORD *)eater == VTBL_PLAYER_FISH && !lives_attack()) return 0;
     return ((Edible_t)FN_PLAYER_EDIBLE)(self, eater);
 }
 
 char __thiscall coop_shield_edible_hook(BYTE *self, BYTE *eater)
 {
-    if (eater && *(DWORD *)eater == VTBL_PLAYER_FISH) return 0;
+    if (eater && *(DWORD *)eater == VTBL_PLAYER_FISH && !lives_attack()) return 0;
     return ((Edible_t)FN_SHIELD_EDIBLE)(self, eater);
 }
 
 // The suck ability bypasses TryEat: the stage's collision pass (0x440660) hands every
 // suckable thing near a sucking player to Suck (0x439030, esi = player, edi = item), which
-// pulls it in and eats it. That call (at 0x4408d9) now skips player fish and rainbow minnows.
+// pulls it in and eats it. That call (at 0x4408d9) now skips player fish and rainbow minnows,
+// and in Lives Attack poison minnows (pulled instead, hazards_pulled).
 #define ADDR_SUCK_CALL         0x4408d9
 #define FN_SUCK                0x439030
 void coop_suck_thunk(void);
@@ -488,7 +519,11 @@ __asm__(
     "    je 1f\n"
     "    cmpl $0x553ac4, (%edi)\n"  // or a rainbow minnow (ShieldFish, see coop_try_eat_hook)
     "    je 1f\n"
-    "    pushl $0x439030\n"         // else on to Suck, registers as they were
+    "    cmpl $0x553464, (%edi)\n"  // or in Lives Attack a poison minnow (PoisonFish)
+    "    jne 2f\n"
+    "    cmpl $0, _coop_lives_attack_on\n"
+    "    jne 1f\n"
+    "2:  pushl $0x439030\n"         // else on to Suck, registers as they were
     "    ret\n"
     "1:  ret\n");
 
@@ -705,6 +740,7 @@ static void activate_player(int i)
     // has their own: back at it after being eaten, or the smallest when joining.
     int *level = (int *)(g_spawn + SPAWN_LEVEL), keeper_level = *level;
     int own = competitive() && mode == MODE_HUNGER && i != keeper ? (p->growth >= 0 ? p->level : 0) : keeper_level;
+    if (lives_attack()) own = level_count() - 1; // Lives Attack: everyone at the last size
     creating = 1;
     set_spawner_fish(p->fish);
     g_spawn[SPAWN_DONE] = 0;
@@ -720,7 +756,7 @@ static void activate_player(int i)
     p->carry_x = p->carry_y = 0;
     p->dash_down = 1; // a button still held from joining doesn't dash
     p->special_down = 0;
-    if (competitive() && mode == MODE_HUNGER && p->growth < 0) p->lives = HUNGER_STRIKE_LIVES; // joining
+    if (round_lives() && p->growth < 0) p->lives = round_lives(); // joining
     if (p->lives < 0) {
         int *lives = game_lives(g_stage);
         p->lives = lives && *lives > 0 ? *lives : 1;
@@ -776,14 +812,14 @@ void __thiscall coop_enter_hook(BYTE *player, BYTE *stage, int arg)
     }
     set_spawner_fish(player);
     creating = 0;
-    // Hunger Strike starts every level with HUNGER_STRIKE_LIVES each (the game's count is
+    // a competitive round starts every level with its lives each (the game's count is
     // player 1's here)
-    int *lives = game_lives(stage), hunger = competitive() && mode == MODE_HUNGER;
-    if (hunger && lives) *lives = last_game_lives = HUNGER_STRIKE_LIVES;
+    int *lives = game_lives(stage), round = round_lives();
+    if (round && lives) *lives = last_game_lives = round;
     int joined = 0;
     for (int i = 1; i < MAX_PLAYERS; i++) {
         if (!pl[i].device || !pl[i].fish) continue;
-        if (hunger) pl[i].lives = HUNGER_STRIKE_LIVES;
+        if (round) pl[i].lives = round;
         else if (pl[i].lives == 0) pl[i].lives = 1; // ran out last stage: back with one
         activate_player(i);
         joined++;
@@ -851,6 +887,32 @@ static int level_goal(int level)
     return level >= 0 && level < level_count() ? begin[level * 2 + 1] : 0x7fffffff;
 }
 
+// The last one standing in a competitive round wins, whatever their size: the spawner goes to
+// them and their size counts as the last, with the counter at its end, so the game ends the
+// stage for them as for a full bar. 1 if that happened (or someone had won already).
+static int last_one_standing(void)
+{
+    int *level = (int *)(g_spawn + SPAWN_LEVEL), *counter = growth_counter(), last = level_count() - 1;
+    if (winner >= 0) return 1;
+    if (!counter || last < 0) return 0;
+    int taking_part = 0, standing = 0, last_standing = -1;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (!present(i)) continue;
+        taking_part++;
+        if (!eliminated(i)) standing++, last_standing = i;
+    }
+    if (taking_part < 2 || standing != 1) return 0;
+    announce_winner(last_standing);
+    log_printf("competitive: player %d is the last one standing", last_standing + 1);
+    if (last_standing != keeper) {
+        set_spawner_fish(pl[last_standing].fish); // our references on the two swap with the spawner's
+        keeper = last_standing;
+    }
+    *level = last;
+    *counter = pl[keeper].growth = level_goal(last);
+    return 1;
+}
+
 static void hunger_strike_growth(BYTE *spawn, void *a, void *b)
 {
     int *level = (int *)(spawn + SPAWN_LEVEL), *counter = growth_counter(), keeper_level = *level, last = level_count() - 1;
@@ -875,26 +937,7 @@ static void hunger_strike_growth(BYTE *spawn, void *a, void *b)
         spawn[SPAWN_DONE] = 1;
         if (grew) log_printf("hunger strike: player %d grew to size %d", i + 1, p->level + 1);
     }
-    if (winner >= 0) return;
-    // the last one standing wins, whatever their size: the stage is ended for them as for a
-    // full bar (their size's counted as the last)
-    int taking_part = 0, standing = 0, last_standing = -1;
-    for (int i = 0; i < MAX_PLAYERS; i++) {
-        if (!present(i)) continue;
-        taking_part++;
-        if (!eliminated(i)) standing++, last_standing = i;
-    }
-    if (taking_part >= 2 && standing == 1) {
-        announce_winner(last_standing);
-        log_printf("hunger strike: player %d is the last one standing", last_standing + 1);
-        if (last_standing != keeper) {
-            set_spawner_fish(pl[last_standing].fish); // our references on the two swap with the spawner's
-            keeper = last_standing;
-        }
-        *level = last;
-        *counter = pl[keeper].growth = level_goal(last);
-        return;
-    }
+    if (winner >= 0 || last_one_standing()) return;
     for (int i = 0; i < MAX_PLAYERS; i++) {
         int lvl = i == keeper ? keeper_level : pl[i].level;
         if (!present(i) || pl[i].growth < 0 || lvl < last || pl[i].growth < level_goal(last)) continue;
@@ -939,6 +982,10 @@ static void spawn_update(BYTE *spawn, void *a, void *b)
     if (!enabled || creating || spawn != g_spawn || !g_stage || !spawn[SPAWN_DONE] || held != pl[keeper].fish) return;
     if (competitive() && mode == MODE_HUNGER) {
         hunger_strike_growth(spawn, a, b);
+        return;
+    }
+    if (lives_attack()) {
+        last_one_standing();
         return;
     }
     int *level = (int *)(spawn + SPAWN_LEVEL);
@@ -1167,9 +1214,9 @@ static void track_game_lives(void)
     if (!lives) return;
     for (int i = 0; i < MAX_PLAYERS; i++)
         if (i != keeper && present(i) && pl[i].lives < 0) pl[i].lives = *lives > 0 ? *lives : 1;
-    if (last_game_lives != -1000 && *lives > last_game_lives && competitive() && mode == MODE_HUNGER) {
-        // no extra lives in Hunger Strike: the game's taken straight back
-        log_printf("hunger strike: an extra life for player %d, taken back", keeper + 1);
+    if (last_game_lives != -1000 && *lives > last_game_lives && round_lives()) {
+        // no extra lives in a competitive round: the game's taken straight back
+        log_printf("competitive: an extra life for player %d, taken back", keeper + 1);
         *lives = last_game_lives;
         refresh_lives();
     }
@@ -1240,6 +1287,15 @@ static int growth_shown(void)
 static void sync_growth(void)
 {
     int *counter = growth_counter();
+    if (lives_attack() && g_stage && g_spawn && !g_stage[STAGE_BONUS] && *(BYTE **)(g_stage + STAGE_GAME)) {
+        // everyone at the last size, and there they stay: the counter's held at its start, so
+        // meals never finish the level (player 1 alone too)
+        int start = size_start(level_count() - 1);
+        for (int i = 0; i < MAX_PLAYERS; i++) pl[i].growth = present(i) ? start : -1;
+        counter = (int *)(*(BYTE **)(g_stage + STAGE_GAME) + GAME_GROWTH);
+        *counter = growth_left = start;
+        return;
+    }
     if (!counter) {
         for (int i = 0; i < MAX_PLAYERS; i++) pl[i].growth = -1;
         growth_left = -1;
@@ -1268,6 +1324,11 @@ static void sync_growth(void)
 
 void __thiscall coop_eat_update_hook(BYTE *eater)
 {
+    if (lives_attack()) {
+        ((EatUpdate_t)FN_EAT_UPDATE)(eater);
+        sync_growth(); // held, see sync_growth
+        return;
+    }
     sync_growth();
     int *counter = growth_counter();
     int who = counter ? player_of(eater - EATER_IFACE) : -1;
@@ -1627,8 +1688,8 @@ static int color_action(BYTE *action)
 // The Options screen's Co-op button (options.xml, in the Co-op checkbox's place) cycles Off,
 // Co-op (together) and the competitive modes; coop and coop_mode in ff2wide.ini. A mode takes
 // effect when the next level starts, like co-op itself; Off at once (coop_request).
-static const char *const mode_keys[MODE_COUNT] = { "together", "hunger" };
-static const char *const mode_names[MODE_COUNT] = { "Co-op", "Hunger Strike" };
+static const char *const mode_keys[MODE_COUNT] = { "together", "hunger", "lives" };
+static const char *const mode_names[MODE_COUNT] = { "Co-op", "Hunger Strike", "Lives Attack" };
 
 const char *coop_mode_name(void)
 {
@@ -2027,6 +2088,90 @@ int coop_guest_player(int guest)
     return 0;
 }
 
+// --- Lives Attack: players eat each other, mouth first ------------------------------------
+// TryEat (0x43dee0) eats when the eater's mouth (its eater interface's +0x24 shape) meets the
+// prey's body (prey +0x78; a shape's +0x38 tests that) and the prey can be eaten (+0xa8: not
+// while it's coming in, coop_player_edible_hook), with no size check of its own: the collision
+// pass (0x440660) only gives it pairs where one is bigger. Everyone's the same size here, so
+// every pair of players is tried each frame: a mouth on the other's body eats them; mouth on
+// mouth (head on), the clearly faster one eats, else neither.
+#define VTBL_EATER_MOUTH       0x24
+#define VTBL_BODY_SHAPE        0x78
+#define VTBL_SHAPE_MEETS       0x38
+#define HEAD_ON_FASTER         1.15f     // how much faster wins a head-on bite
+typedef void *(__thiscall *Shape_t)(BYTE *);
+typedef char (__thiscall *Meets_t)(void *, void *);
+
+static int mouth_on(BYTE *eater, BYTE *prey)
+{
+    BYTE *iface = eater + EATER_IFACE;
+    void *mouth = ((Shape_t)(*(void ***)iface)[VTBL_EATER_MOUTH / 4])(iface);
+    void *body = ((Shape_t)(*(void ***)prey)[VTBL_BODY_SHAPE / 4])(prey);
+    return mouth && body && ((Meets_t)(*(void ***)mouth)[VTBL_SHAPE_MEETS / 4])(mouth, body);
+}
+
+static float speed_of(BYTE *fish)
+{
+    float *v = (float *)(fish + PLAYER_VELOCITY);
+    return sqrtf(v[0] * v[0] + v[1] * v[1]);
+}
+
+static void players_bite(void)
+{
+    for (int i = 0; i < MAX_PLAYERS; i++)
+        for (int j = i + 1; j < MAX_PLAYERS; j++) {
+            if (!swimming(i) || !swimming(j)) continue;
+            int a = mouth_on(pl[i].fish, pl[j].fish), b = mouth_on(pl[j].fish, pl[i].fish), eater = -1, prey = -1;
+            if (a && b) {
+                float si = speed_of(pl[i].fish), sj = speed_of(pl[j].fish);
+                if (si > sj * HEAD_ON_FASTER) eater = i, prey = j;
+                else if (sj > si * HEAD_ON_FASTER) eater = j, prey = i;
+            } else if (a || b) {
+                eater = a ? i : j, prey = a ? j : i;
+            }
+            if (eater < 0) continue;
+            ((TryEat_t)FN_PLAYER_TRY_EAT)(pl[eater].fish + EATER_IFACE, pl[prey].fish);
+            if (player_dead(pl[prey].fish)) log_printf("lives attack: player %d ate player %d", eater + 1, prey + 1);
+        }
+}
+
+// Suction in Lives Attack: no player is sucked in (as ever, coop_suck_thunk), poison minnows
+// aren't eaten through it, and the hazards (jellyfish, poison minnows, squid) are pulled toward
+// a sucking player harder and from farther than the game pulls things (Suck, 0x439030: at
+// 1000 pixels a second, setting the item's velocity, actor slot +0x40), so they can be dragged
+// into another player's way. The stage's actors are the vector at +0x374.
+#define STAGE_ACTORS_BEGIN     0x374
+#define STAGE_ACTORS_END       0x378
+#define VTBL_JELLYFISH         0x55166c
+#define VTBL_CUTTLEFISH        0x54f72c
+#define VTBL_POISON_FISH       0x553464
+#define VTBL_ACTOR_SET_VELOCITY 0x40     // thiscall(actor, float x, float y)
+#define HAZARD_PULL_RANGE      320.0f    // pixels
+#define HAZARD_PULL_SPEED      1500.0f   // pixels a second
+#define HAZARD_PULL_NEAR       30.0f     // close enough: left alone
+typedef void (__thiscall *SetVelocity_t)(BYTE *actor, float x, float y);
+#define VTBL_ACTOR_GET_POSITION 0x54     // thiscall(actor, float out[2]) -> out
+typedef float *(__thiscall *ActorPos_t)(BYTE *actor, float *out);
+
+static void hazards_pulled(void)
+{
+    BYTE **begin = *(BYTE ***)(g_stage + STAGE_ACTORS_BEGIN), **end = *(BYTE ***)(g_stage + STAGE_ACTORS_END);
+    for (int i = 0; begin && i < MAX_PLAYERS; i++) {
+        if (!swimming(i) || !player_sucking(pl[i].fish)) continue;
+        float buf[4], *at = ((ActorPos_t)(*(void ***)pl[i].fish)[VTBL_ACTOR_GET_POSITION / 4])(pl[i].fish, buf);
+        float px = at[0], py = at[1];
+        for (BYTE **a = begin; a < end; a++) {
+            DWORD vtbl = *a ? *(DWORD *)*a : 0;
+            if (vtbl != VTBL_JELLYFISH && vtbl != VTBL_CUTTLEFISH && vtbl != VTBL_POISON_FISH) continue;
+            float qbuf[4], *q = ((ActorPos_t)(*(void ***)*a)[VTBL_ACTOR_GET_POSITION / 4])(*a, qbuf);
+            float dx = px - q[0], dy = py - q[1], d = sqrtf(dx * dx + dy * dy);
+            if (d < HAZARD_PULL_NEAR || d > HAZARD_PULL_RANGE) continue;
+            ((SetVelocity_t)(*(void ***)*a)[VTBL_ACTOR_SET_VELOCITY / 4])(*a, dx / d * HAZARD_PULL_SPEED,
+                                                                             dy / d * HAZARD_PULL_SPEED);
+        }
+    }
+}
+
 // --- Taking players out mid-level (co-op or online play switched off) -------------------
 #define TAKE_OUT_ALL           1         // co-op off: everyone but player 1
 #define TAKE_OUT_GUESTS        2         // online play off: the guests
@@ -2096,6 +2241,7 @@ void coop_frame(BYTE *engine)
     int playing = (relative && relative[0x50]) || GetTickCount() - keeper_dying_tick < 200;
     take_out_players();
     open_missions();
+    coop_lives_attack_on = lives_attack();
     if (banner_timer > 0) banner_timer -= dt;
     mice_set_play(enabled && g_stage && playing);
     now_playing = playing;
@@ -2106,6 +2252,10 @@ void coop_frame(BYTE *engine)
     sorry_over(dt);
     if (!playing) return;
     find_joiners();
+    if (lives_attack()) {
+        players_bite();
+        hazards_pulled();
+    }
 
     // With other players' mice, player 1's clicks come from its own mouse (the shared ones are
     // held back, mice.c).
